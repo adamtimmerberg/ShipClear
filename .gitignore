@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Generated output
+SHIP-REPORT.md
+*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Local working notes and planning documents (not part of the product)
+TheGamePlan.md
+TheMarketingPlan.md
+wiki/
+.claude/

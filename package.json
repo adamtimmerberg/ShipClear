@@ -1,0 +1,44 @@
+{
+  "name": "shipclear",
+  "version": "0.1.0",
+  "description": "The last command before you launch. A free, local, cross-agent security gate for AI-built apps: prevents leaked secrets while you build, blocks them at commit time, and gives you a plain-English safe-to-ship verdict.",
+  "keywords": [
+    "security",
+    "secrets",
+    "scanner",
+    "vibe-coding",
+    "ai",
+    "claude-code",
+    "codex",
+    "cursor",
+    "pre-commit",
+    "devtools"
+  ],
+  "homepage": "https://github.com/adamtimmerberg/ShipClear#readme",
+  "bugs": "https://github.com/adamtimmerberg/ShipClear/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamtimmerberg/ShipClear.git"
+  },
+  "license": "MIT",
+  "author": "Adam Timmerberg",
+  "type": "module",
+  "bin": {
+    "shipclear": "cli/bin/shipclear.js"
+  },
+  "files": [
+    "cli",
+    "core",
+    "adapters",
+    "docs/quickstart.md"
+  ],
+  "scripts": {
+    "test": "node tests/run.js",
+    "build:adapters": "node scripts/build-adapters.mjs",
+    "check:adapters": "node scripts/build-adapters.mjs --check",
+    "gate": "node cli/bin/shipclear.js ship"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
