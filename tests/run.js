@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { applyFixes } from '../cli/lib/fix.js';
 import { verdictOf } from '../cli/lib/report.js';
-import { findSecrets, looksPlaceholder } from '../cli/lib/patterns.js';
+import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -67,6 +67,65 @@ console.log('\npatterns');
   check('generic matcher catches realistic values',
     findSecrets('apiKey = "q7x9' + 'Zk2pLm4vRn8tWc3y"').some((h) => h.patternId === 'generic-secret'));
   check('env var usage is not a finding', findSecrets('const key = process.env.API_KEY;').length === 0);
+}
+
+// --- unit: provider pattern vectors (every pattern proven, per CONTRIBUTING) ---
+console.log('\nprovider vectors');
+{
+  // [patternId, vector] — all fakes assembled at runtime.
+  const vectors = [
+    ['aws-access-key', 'AKIA' + 'IOSFODNN7EXAMPLE'],
+    ['stripe-live-key', 'sk_live_' + 'FAKEFAKEFAKEFAKEFAKE'],
+    ['openrouter-api-key', 'sk-or-v1-' + 'ab12'.repeat(16)],
+    ['openai-api-key', 'sk-proj-' + 'FAKE'.repeat(10)],
+    ['github-token', 'ghp_' + 'A1b2C3'.repeat(6)],
+    ['google-api-key', 'AIza' + 'FAKE0'.repeat(7)],
+    ['slack-token', 'xoxb-' + '123456789-FAKEFAKE'],
+    ['sendgrid-api-key', 'SG.' + 'a'.repeat(22) + '.' + 'b'.repeat(43)],
+    ['npm-token', 'npm_' + 'a1B2'.repeat(9)],
+    ['huggingface-token', 'hf_' + 'aB3d'.repeat(8) + 'aB'],
+    ['digitalocean-token', 'dop_v1_' + 'ab12'.repeat(16)],
+    ['groq-api-key', 'gsk_' + 'FAKE'.repeat(6)],
+    ['xai-api-key', 'xai-' + 'FAKE'.repeat(6)],
+    ['azure-account-key', 'AccountKey=' + 'Ab1+'.repeat(11) + '=='],
+    ['private-key-block', '-----BEGIN ' + 'PRIVATE KEY-----'],
+    ['connection-string', 'postgres://app:' + 'hunter2secret9@db.host/x'],
+  ];
+  for (const [id, vector] of vectors) {
+    check(`detects ${id}`, findSecrets(`x = "${vector}"`, { includeGeneric: false })
+      .some((h) => h.patternId === id));
+  }
+  // Supabase service-role JWT: payload decodes to role=service_role.
+  const b64url = (s) => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const srJwt = [b64url('{"alg":"HS256"}'), b64url('{"role":"service_role"}'), 'FAKESIGNATUREFAKE'].join('.');
+  const anonJwt = [b64url('{"alg":"HS256"}'), b64url('{"role":"anon"}'), 'FAKESIGNATUREFAKE'].join('.');
+  check('detects supabase service-role JWT',
+    findSecrets(srJwt, { includeGeneric: false }).some((h) => h.patternId === 'supabase-service-role'));
+  check('ignores supabase anon JWT (public by design)',
+    findSecrets(anonJwt, { includeGeneric: false }).length === 0);
+}
+
+// --- unit: false-positive regressions (each vector found on a real repo) ---
+console.log('\nfalse-positive regressions (from the real-world sweep)');
+{
+  check('template db password is not a finding (t3/taxonomy)',
+    findSecrets('DATABASE_URL="mysql://root:password@localhost:3306/app"').length === 0);
+  check('changethis db password is not a finding (fastapi-template)',
+    findSecrets('postgres://postgres:changethis@db:5432/app').length === 0);
+  check('mustache-templated password is not a finding (fastapi-template)',
+    findSecrets('password: "{{ password }}"').length === 0);
+  check('env() indirection is not a finding (supabase config.toml)',
+    findSecrets('secret = "env(SUPABASE_AUTH_SECRET)"').length === 0);
+  check('ALL_CAPS constant value is not a finding (firebase quickstart)',
+    findSecrets('apiKey: "API_KEY_FROM_CONSOLE"').length === 0);
+  check('real db password still IS a finding',
+    findSecrets('postgres://app:q7x9' + 'Zk2pLm4vRn8t@db.host/x').length === 1);
+  check('import path is not a personal path (precedent)',
+    personalPaths('import Card from "components/home/card";').length === 0);
+  check('absolute path still IS a personal path',
+    personalPaths('const dir = "/home/adamdev/uploads";').length === 1);
+  check('mypassword db password is not a finding (firebase quickstart)',
+    findSecrets('postgresql://user:mypassword@localhost:5432/db').length === 0);
 }
 
 // --- integration: vulnerable fixture ---
