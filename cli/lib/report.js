@@ -86,6 +86,9 @@ export const VERDICT_TEXT = {
   CLEARED: '✅ CLEARED TO SHIP — no blocking findings.',
 };
 
+export const BADGE_MARKDOWN =
+  '[![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)](https://github.com/adamtimmerberg/ShipClear)';
+
 function sorted(findings) {
   return [...findings].sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]
@@ -128,6 +131,11 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version }
   lines.push('');
   const v = VERDICT_TEXT[verdict];
   lines.push('  ' + color(verdict === 'CLEARED' ? '32;1' : verdict === 'DO_NOT_SHIP' ? '31;1' : '33;1', v));
+  if (verdict === 'CLEARED') {
+    lines.push('');
+    lines.push('  Show it off — add the badge to your README:');
+    lines.push('  ' + BADGE_MARKDOWN);
+  }
   lines.push('');
   lines.push('  Full report written to SHIP-REPORT.md');
   lines.push('');
@@ -143,6 +151,14 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
   out.push('');
   out.push(`## Verdict: ${VERDICT_TEXT[verdict]}`);
   out.push('');
+  if (verdict === 'CLEARED') {
+    out.push('Cleared! Add the badge to your README to show your app passed:');
+    out.push('');
+    out.push('```markdown');
+    out.push(BADGE_MARKDOWN);
+    out.push('```');
+    out.push('');
+  }
   if (open.length === 0) {
     out.push('No findings from the deterministic scan.');
   } else {
