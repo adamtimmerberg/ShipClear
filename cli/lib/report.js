@@ -190,10 +190,14 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     out.push('The scan above catches everything a pattern can catch. These six need code understanding — ask your AI assistant to work through them (the ShipClear adapters do this automatically):');
     out.push('');
     out.push('- [ ] **Hidden accounts:** no route, seed, or conditional grants access via a fixed credential or magic string — including ones the AI created during development.');
-    out.push('- [ ] **Auth coverage:** every endpoint either requires authentication or is intentionally public (list the public ones).');
+    out.push('- [ ] **Auth and ownership:** every endpoint either requires authentication or is intentionally public; every resource access verifies the resource belongs to the requester (an ID alone is never enough).');
     out.push('- [ ] **Database exposure:** no world-readable/world-writable rules (Firebase rules, Supabase RLS, etc.).');
     out.push('- [ ] **Client-side leakage:** no server secret reaches anything delivered to the browser.');
+    out.push('- [ ] **Input handling:** database/shell input parameterized, rendered HTML escaped, file uploads validated with size limits.');
+    out.push('- [ ] **Server-side trust:** prices, roles, and privileged fields computed or verified server-side; webhook signatures verified before processing.');
+    out.push('- [ ] **Session and abuse surface:** tokens in httpOnly cookies (not localStorage); rate limiting on login/signup/reset.');
     out.push('- [ ] **Debug surface:** no debug endpoints, stack traces shown to users, or `*` CORS on authenticated APIs.');
+    out.push('- [ ] **AI surface** (if the app calls LLMs/agents): prompt inputs treated as untrusted, model output validated before executing/rendering/storing, agent and MCP tools least-privilege.');
     out.push('- [ ] **Verdict update:** append any semantic findings here and restate the verdict (a critical one means DO NOT SHIP).');
   }
   out.push('');
