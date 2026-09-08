@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the gate's history scan needs full history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No install step: ShipClear has zero runtime dependencies, on purpose.
+      - name: Test suite
+        run: npm test
+      - name: Adapters match the canonical core
+        run: npm run check:adapters
+      - name: ShipClear passes its own gate
+        run: npm run gate
