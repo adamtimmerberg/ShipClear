@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+
 # Generated output
 SHIP-REPORT.md
 *.log

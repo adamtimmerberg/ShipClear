@@ -1,0 +1,3 @@
+# Paths ShipClear should not scan in this repository.
+# The fixtures are deliberately-vulnerable sample apps used by the test suite.
+tests/fixtures/
