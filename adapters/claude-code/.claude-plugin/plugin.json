@@ -1,0 +1,7 @@
+{
+  "name": "shipclear",
+  "version": "0.1.0",
+  "description": "Security companion for AI-assisted coding: prevention rules applied to every task, a commit guard that blocks leaked secrets, and the /safe-to-ship gate.",
+  "author": { "name": "Adam Timmerberg" },
+  "homepage": "https://github.com/adamtimmerberg/ShipClear"
+}

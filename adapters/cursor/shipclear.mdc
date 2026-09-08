@@ -1,0 +1,40 @@
+---
+description: ShipClear secure-by-default rules for AI-assisted coding — apply to every task
+alwaysApply: true
+---
+
+<!-- GENERATED from core/prevention.md by scripts/build-adapters.mjs. Do not edit by hand — edit the core file and run `npm run build:adapters`. -->
+
+# ShipClear prevention rules
+
+These rules are for AI coding agents and assistants. Follow them on every task, in every project, from the first line of code. They exist so the human you're helping never ships a leaked secret, an exposed database, or a forgotten test account. When a rule conflicts with speed, the rule wins.
+
+## 1. Secrets never touch source code
+
+- Before writing the first line of application code in a new project, create three files: `.env` (real values, never committed), `.env.example` (same keys, empty or placeholder values), and `.gitignore` containing at minimum `.env`, `.env.*` (with an exception for `.env.example`), and your dependency directory.
+- Never write an API key, password, token, connection string, or any credential directly in source code, config files, notebooks, HTML, or client-side JavaScript — not even "temporarily", not even in comments. Use environment variables (`process.env.X`, `os.environ["X"]`) from the very first draft.
+- Server-side secrets must never reach frontend code. Anything shipped to a browser is public. If the frontend needs data that requires a secret, put the secret behind a server endpoint.
+- If a secret was ever written into a tracked file — even if deleted afterwards — tell the user plainly: the key must be **rotated** (regenerated at the provider), because git history preserves it.
+
+## 2. No hardcoded accounts, ever
+
+- Never create hardcoded login credentials, "temporary" admin accounts, magic bypass strings, or backdoor routes while building or testing — not in code, not in seed scripts, not in database migrations.
+- If testing requires an account, generate random credentials at seed time, store them only in a git-ignored file (`.shipclear/test-accounts.json`), and tell the user it exists so it can be deleted before launch.
+- Never weaken authentication to make a test pass. Fix the test.
+
+## 3. Real data stays out of the repository
+
+- Never commit data files (CSV, JSON, SQL dumps, database files, exports) containing real names, emails, phone numbers, or any personal information. Generate synthetic data for development and seeding.
+- If the user provides a real data file, keep it git-ignored and say so explicitly.
+
+## 4. Secure defaults for common stacks
+
+- Every non-public API route gets an authentication check — deny by default. Do not defer auth "until later".
+- Database access rules (Firebase rules, Supabase RLS, and similar) start locked: no world-readable or world-writable tables. Enable row-level security before inserting the first row.
+- Validate and parameterize all user input touching a database (no string-built SQL). Escape output rendered into HTML.
+- Don't disable security to fix an error (CORS `*` on authenticated APIs, `rejectUnauthorized: false`, disabled CSRF) — solve the actual problem, and say what it was.
+
+## 5. Be honest about security state
+
+- When you take a shortcut or leave something unfinished that has security implications, say so out loud and record it — never let the user believe the project is more secure than it is.
+- Before the user shares the repository publicly or deploys, recommend running the ShipClear gate: `npx shipclear ship`.
