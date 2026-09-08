@@ -1,0 +1,3 @@
+# FIXTURE: a committed .env file (the classic leak). Values are fake.
+STRIPE_SECRET_KEY=sk_live_FAKEFAKEFAKEFAKEFAKEFAKE
+DATABASE_PASSWORD=trustno1-batteries
