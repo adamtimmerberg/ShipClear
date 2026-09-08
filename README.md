@@ -75,9 +75,15 @@ Full walkthroughs: [docs/quickstart.md](docs/quickstart.md).
 
 ## What the gate checks
 
-Secrets in your code **and in your entire git history** (deleting a key doesn't un-leak it) · committed `.env` and private key files · real-looking values in `.env.example` · `.gitignore` coverage · personal data (emails, SSNs) in tracked data files · hardcoded login accounts · known-vulnerable dependencies · hardcoded credentials of any provider (AWS, OpenAI, Anthropic, Stripe, GitHub, Google, Slack, database URLs, private keys) · your local paths and AI-session artifacts leaking into the repo.
+Secrets in your code **and in your entire git history** (deleting a key doesn't un-leak it) · committed `.env` and private key files · real-looking values in `.env.example` · `.gitignore` coverage · personal data (emails, SSNs) in tracked data files · hardcoded login accounts · known-vulnerable dependencies · your local paths and AI-session artifacts leaking into the repo.
 
-Plus a semantic checklist your AI assistant runs (auth on every route, database rules, client-side leakage, debug surface) — the checks a regex can't do.
+Provider keys covered: AWS, Anthropic, OpenAI, OpenRouter, Groq, xAI, Hugging Face, Stripe, GitHub, Google, Slack, SendGrid, npm, DigitalOcean, Azure, private keys, database URLs with real passwords — and Supabase JWTs done right: service-role keys are flagged, anon keys (public by design) are left alone.
+
+Detection is tuned against real-world starter repos, with a false-positive regression test for every fix. And if you have `gitleaks` or `osv-scanner` installed, ShipClear automatically uses them for extra depth — it just never *requires* them.
+
+Plus a ten-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, and an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools).
+
+Pass the gate and you'll get a badge for your README: ![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)
 
 ## Privacy, by architecture
 
