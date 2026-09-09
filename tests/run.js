@@ -558,6 +558,11 @@ console.log('\ntest-account registry');
   const objPair = `{ email: '${adminEmail}', ${pw}: 'letmein1' }`;
   check('JSON-shaped "password": "…" matches the hardcoded-login check', PASSWORD_ASSIGNMENT.test(jsonPair));
   check('unquoted password: "…" still matches', PASSWORD_ASSIGNMENT.test(objPair));
+  // Short password variable names an AI sometimes uses (missed on a monorepo
+  // test until the pattern was broadened).
+  check('pwd = "…" matches', PASSWORD_ASSIGNMENT.test('pwd = ' + '"letmein123"'));
+  check('PW = "…" is deliberately NOT matched (too ambiguous/short)',
+    !PASSWORD_ASSIGNMENT.test('PW = ' + '"letmein123"'));
   check('quoted admin email still matches', SUSPICIOUS_ACCOUNT_EMAIL.test(`"email": "${adminEmail}"`));
 
   const dir = makeRepo('clean-app');

@@ -168,7 +168,12 @@ export function realLookingEmails(content) {
 // leading \b: it must also hit inside names like TEST_PASSWORD. The optional
 // quote before the separator covers JSON and quoted-key object literals
 // (`"password": "…"`), the shape an AI writes into a seed or fixture file.
-export const PASSWORD_ASSIGNMENT = /pass(?:word|wd)?[a-z0-9_]*["']?\s*[:=]\s*['"][^'"\n]{4,}['"]/i;
+// Matches password-ish identifiers: password / passwd / pass, plus the short
+// forms pwd / pword an AI sometimes uses (found missed on a monorepo test).
+// No leading \b, so it also fires inside names like TEST_PASSWORD; the
+// two-signal test-account rule (a suspicious account email nearby) keeps the
+// broader match from producing false findings on its own.
+export const PASSWORD_ASSIGNMENT = /(?:pass(?:word|wd)?|pword|pwd)[a-z0-9_]*["']?\s*[:=]\s*['"][^'"\n]{4,}['"]/i;
 
 // Quoted email that smells like a built-in account.
 export const SUSPICIOUS_ACCOUNT_EMAIL = /['"][a-z0-9._%+-]*(?:admin|test|demo|root|superuser)[a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}['"]/i;
