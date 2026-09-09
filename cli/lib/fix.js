@@ -121,7 +121,7 @@ export function resetHistory(root, findings) {
     return { refused: `other findings are still open (${list}). A fresh start saves whatever is in your project right now as the new first commit — so fix those first, then run --fix-history last. Otherwise they'd end up in history and you'd have to do this twice.` };
   }
   if (hasRemote(root)) {
-    return { refused: 'this repo has a remote configured, so old commits may already exist somewhere else — erasing local history would not remove them. Follow the manual steps in the finding above instead.' };
+    return { refused: 'this repo has a remote configured, so old commits may already exist somewhere else — erasing local history would not remove them. Use the steps in the "secret exists in your git history" finding above instead: paste its sentence to your AI assistant, or follow the do-it-yourself commands.' };
   }
   const branches = branchNames(root);
   if (branches.length > 1) {
