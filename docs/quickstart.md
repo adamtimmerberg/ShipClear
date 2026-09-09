@@ -65,6 +65,9 @@ This is the path for **Bolt.new, Lovable, Replit, v0**, or anyone without a term
 npx shipclear setup   # .env/.env.example/.gitignore + commit guard
 npx shipclear scan    # quick secrets check any time
 npx shipclear ship    # the full gate → SHIP-REPORT.md + verdict
+npx shipclear ship --fix-history
+                      # after fixing everything else: erase old commits that held a secret
+                      # (only for repos never pushed anywhere; refuses if it would lose any work)
 ```
 
 The full report (`SHIP-REPORT.md`) ends with a checklist meant for an AI to work through with you — if you don't have one built into your terminal, paste that checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to go through the list, or ask a developer friend.
