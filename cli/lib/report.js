@@ -29,7 +29,7 @@ const EXPLAIN = {
   'gitignore-incomplete': {
     title: '.env files are not protected by .gitignore',
     why: 'Without this, one ordinary `git add .` commits your secrets. This is the single most common way keys leak.',
-    fix: 'ShipClear fixed this for you — .gitignore now excludes .env files.',
+    fix: 'Add a line with just `.env` (and `.env.*`) to your .gitignore file — or run `shipclear ship` again without `--no-fix` and ShipClear will add it for you.',
   },
   'pii-data-file': {
     title: 'A data file with real-looking personal information is in the repo',
@@ -64,7 +64,7 @@ const EXPLAIN = {
   'env-example-missing': {
     title: 'No .env.example template exists',
     why: 'Not a leak — just a courtesy: a template tells collaborators (and AI agents) which settings exist without revealing any values.',
-    fix: 'ShipClear created one from your .env, with all values stripped.',
+    fix: 'Copy .env to .env.example and delete all the values, keeping just the variable names — or run `shipclear ship` again without `--no-fix` and ShipClear will create it for you.',
   },
 };
 

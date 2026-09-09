@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { applyFixes } from '../cli/lib/fix.js';
-import { verdictOf } from '../cli/lib/report.js';
+import { verdictOf, renderMarkdown, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -157,6 +157,23 @@ console.log('\nvulnerable-app (every planted issue must be found)');
   check('verdict still DO NOT SHIP after safe fixes (criticals remain)',
     verdictOf(findings) === 'DO_NOT_SHIP');
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- report text never claims a fix that wasn't applied ---
+// (`ship --no-fix` leaves these findings unresolved; the fix-text is only
+// ever shown in exactly that unresolved state, so it must never claim the
+// fix already happened — a real bug this project shipped once.)
+console.log('\nreport text (no false "already fixed" claims)');
+{
+  for (const id of ['gitignore-incomplete', 'env-example-missing']) {
+    const finding = { id, severity: 'high', file: '.gitignore' };
+    const md = renderMarkdown({ findings: [finding], notes: [], verdict: 'SHIP_WITH_FIXES', version: '0.0.0', semanticSection: false });
+    check(`${id}: fix text doesn't falsely claim it's done`,
+      !/ShipClear (fixed|created)/i.test(EXPLAIN[id].fix),
+      EXPLAIN[id].fix);
+    check(`${id}: rendered report doesn't falsely claim it's done`,
+      !/ShipClear (fixed|created)/i.test(md));
+  }
 }
 
 // --- integration: clean fixture ---
