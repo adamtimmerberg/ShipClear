@@ -23,6 +23,8 @@ A scan of 5,600 AI-built apps found 2,000+ vulnerabilities and 400 exposed API k
 
 ## One command
 
+*(Never typed a command before? [Start here](docs/quickstart.md#first-time-typing-a-command-start-here) — it takes two minutes.)*
+
 ```bash
 npx shipclear ship
 ```

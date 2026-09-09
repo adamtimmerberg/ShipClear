@@ -2,6 +2,19 @@
 
 Every path below ends the same way: run `npx shipclear ship` before you deploy or make the repo public, and get a plain-English verdict.
 
+## First time typing a command? Start here.
+
+Every instruction below happens in a **terminal** — a text window where you type commands instead of clicking buttons. If you've only ever built with AI tools in the browser, here's where to find one:
+
+- **Bolt.new / Lovable / Replit / v0:** look for a "Terminal" or "Console" tab or panel, usually near the bottom of the screen or behind a `>_` icon.
+- **Cursor / VS Code:** the menu bar → **Terminal → New Terminal**.
+- **Mac:** open the **Terminal** app (search for it with Spotlight, ⌘+Space).
+- **Windows:** open **PowerShell** or **Windows Terminal** from the Start menu.
+
+Once it's open, make sure you're inside your project's folder (your AI assistant can tell you the command for that if you're not sure), then type the commands below and press Enter.
+
+**If a command says `command not found`:** you'll also need [Node.js](https://nodejs.org) installed — it's what runs `npx`. Download the "LTS" version, install it like any other app, then try again.
+
 ## Claude Code (recommended: the full plugin)
 
 ```

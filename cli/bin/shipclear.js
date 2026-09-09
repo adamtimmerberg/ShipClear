@@ -39,6 +39,7 @@ fi
 
 function cmdSetup(root) {
   const done = [];
+  const warnings = [];
   const gitignorePath = path.join(root, '.gitignore');
   const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
   if (!gitignore.split('\n').some((l) => /^(\.env(\.\*)?|\*\.env|\.env\*)\s*$/.test(l.trim()))) {
@@ -60,19 +61,20 @@ function cmdSetup(root) {
     const hookDir = path.join(root, '.git', 'hooks');
     const hookPath = path.join(hookDir, 'pre-commit');
     if (fs.existsSync(hookPath) && !fs.readFileSync(hookPath, 'utf8').includes('ShipClear')) {
-      console.log('  ! A pre-commit hook already exists — not touching it. Add `shipclear scan --staged` to it manually.');
+      warnings.push('this project already has a pre-commit hook, so ShipClear left it alone — your commits are NOT yet protected. Add `shipclear scan --staged` as a line in that existing hook to turn protection on.');
     } else {
       fs.mkdirSync(hookDir, { recursive: true });
       fs.writeFileSync(hookPath, HOOK_SCRIPT, { mode: 0o755 });
-      done.push('installed commit guard (secrets can no longer be committed)');
+      done.push('installed the commit guard (secrets can no longer be committed)');
     }
   } else {
-    console.log('  ! No git repository here yet. Run `git init`, then `shipclear setup` again to install the commit guard.');
+    warnings.push("this folder isn't set up with git yet, so ShipClear couldn't install the commit guard — the safety net that stops a secret from ever being committed. Run `git init` in this folder, then run `shipclear setup` again.");
   }
 
-  console.log('\n  ShipClear setup complete.');
+  console.log(warnings.length ? '\n  ShipClear setup finished — but read this first:' : '\n  ShipClear setup complete.');
   for (const d of done) console.log(`   ✔ ${d}`);
-  if (!done.length) console.log('   ✔ everything was already in place');
+  if (!done.length && !warnings.length) console.log('   ✔ everything was already in place');
+  for (const w of warnings) console.log(`   ⚠ ${w}`);
   console.log('\n  Before you launch or go public: shipclear ship\n');
 }
 
