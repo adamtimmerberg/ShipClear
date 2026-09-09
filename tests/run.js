@@ -328,6 +328,46 @@ console.log('\n--fix-history (safe automated history reset)');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
+  // The reset must run LAST. A third independent test ran it first, then
+  // fixed the PII file and hardcoded login in the working tree — and got
+  // CLEARED TO SHIP on a repo whose only commit still held four SSNs,
+  // because the fresh start had snapshotted them. It must refuse while
+  // any medium+ finding it can't itself cure is still open.
+  {
+    const { dir, git } = leakyRepo();
+    fs.writeFileSync(path.join(dir, 'people.csv'),
+      'name,email,ssn\nA B,ab1@gmail.com,123-45-6789\nC D,cd2@yahoo.com,987-65-4321\nE F,ef3@outlook.com,555-12-3456\n');
+    git('add', 'people.csv'); git('commit', '-q', '-m', 'add data');
+    const { findings } = runGate(dir);
+    check('setup: both history and PII findings are open',
+      findings.some((f) => f.id === 'secret-in-history') && findings.some((f) => f.id === 'pii-data-file'));
+    const before = git('log', '--all', '--oneline');
+    const { done, refused } = resetHistory(dir, findings);
+    check('refuses while a PII finding is still open', !done && /people\.csv/.test(refused || ''), refused);
+    check('says to fix those first and run it last', /fix those first.*last/i.test(refused || ''));
+    check('history untouched when refused for open findings', git('log', '--all', '--oneline') === before);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // rm -rf .git takes the commit guard with it. The same test found the
+  // guard silently gone afterward — "secrets can no longer be committed"
+  // was no longer true and nothing said so.
+  {
+    const { dir, git } = leakyRepo();
+    const hookPath = path.join(dir, '.git', 'hooks', 'pre-commit');
+    fs.mkdirSync(path.dirname(hookPath), { recursive: true });
+    fs.writeFileSync(hookPath, '#!/bin/sh\n# ShipClear guard\nexit 0\n', { mode: 0o755 });
+    const { findings } = runGate(dir);
+    const { done } = resetHistory(dir, findings);
+    check('reset succeeded with guard present', !!done);
+    check('commit guard reinstalled after reset',
+      fs.existsSync(hookPath) && fs.readFileSync(hookPath, 'utf8').includes('ShipClear'));
+    check('done message says the guard was reinstalled', /guard was reinstalled/.test(done || ''));
+    check('fresh commit message does not advertise the leak',
+      !/leak|secret/i.test(git('log', '-1', '--format=%s')));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   // Refusals: each must leave .git and the history completely untouched.
   const refuses = [
     ['a remote is configured', (git) => git('remote', 'add', 'origin', 'https://example.com/x.git'), /remote/],
@@ -344,6 +384,55 @@ console.log('\n--fix-history (safe automated history reset)');
     check(`history untouched when ${why}`, git('log', '--all', '--oneline') === before);
     check(`finding stays unresolved when ${why}`,
       findings.some((f) => f.id === 'secret-in-history' && !f.resolved));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- the git commit guard: closed on findings, open when it can't run ---
+// The third independent test hit a reinstalled hook that couldn't reach the
+// (unpublished) package and got a wall of "npm error 404" blocking every
+// commit, with no ShipClear-worded explanation. Same fail-open rule as the
+// Claude Code guard: block only when the scan ran and found something.
+console.log('\ngit commit guard');
+{
+  const { HOOK_SCRIPT, installHook } = await import('../cli/lib/fix.js');
+  check('hook script blocks only on a real "ShipClear blocked" result',
+    /ShipClear blocked/.test(HOOK_SCRIPT) && /Letting this commit through/.test(HOOK_SCRIPT));
+
+  if (process.platform === 'win32') {
+    console.log('  (skipped live hook run on Windows — `-x` under Git\'s sh is not reliable there; Linux/macOS cover it)');
+  } else {
+    const gitIn = (dir) => (...args) =>
+      spawnSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
+        '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+    const dir = makeRepo('clean-app');
+    const git = gitIn(dir);
+    // A local ./node_modules/.bin/shipclear so the hook takes the "installed"
+    // branch and runs THIS checkout, not npx.
+    const bin = path.join(dir, 'node_modules', '.bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'shipclear'),
+      `#!/bin/sh\nexec node "${path.join(here, '../cli/bin/shipclear.js')}" "$@"\n`, { mode: 0o755 });
+    check('installHook installs the guard', installHook(dir));
+
+    fs.writeFileSync(path.join(dir, 'leak.js'), `const k = "${FAKE_ANTHROPIC_KEY}";\n`);
+    git('add', 'leak.js');
+    const blocked = git('commit', '-q', '-m', 'leak');
+    check('a commit with a staged secret is blocked', blocked.status !== 0);
+    check('the block is explained in ShipClear\'s words', /ShipClear blocked/.test(blocked.stderr));
+
+    git('rm', '-q', '--cached', 'leak.js'); fs.rmSync(path.join(dir, 'leak.js'));
+    fs.writeFileSync(path.join(dir, 'ok.txt'), 'ok\n');
+    git('add', 'ok.txt');
+    check('a clean commit goes through', git('commit', '-q', '-m', 'ok').status === 0);
+
+    // Scanner unavailable → warn and let it through, never a wall of npm errors.
+    fs.writeFileSync(path.join(bin, 'shipclear'), '#!/bin/sh\necho "npm error 404 Not Found" >&2\nexit 1\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'more.txt'), 'more\n');
+    git('add', 'more.txt');
+    const open = git('commit', '-q', '-m', 'more');
+    check('when the scanner cannot run, the commit is let through', open.status === 0);
+    check('…with a ShipClear-worded warning, not raw npm output', /ShipClear guard: could not run/.test(open.stderr));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }

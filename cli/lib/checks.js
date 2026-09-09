@@ -185,6 +185,10 @@ export function runGate(root, { quick = false } = {}) {
   if (inGit && hasCommits(root)) {
     const remoteExists = hasRemote(root);
     const seen = new Set();
+    // One finding per file+commit, not per secret: two keys leaked in the
+    // same .env in the same commit are one problem with one fix, and two
+    // identical ten-line paragraphs read as "do this twice" to a beginner.
+    const byLocation = new Map();
     for (const { commit, file, text } of historyAddedLines(root)) {
       if (ignored(file)) continue;
       for (const hit of findSecrets(text, { includeGeneric: false })) {
@@ -194,14 +198,25 @@ export function runGate(root, { quick = false } = {}) {
         // covers rotation, so a history duplicate is just noise. History
         // findings are for secrets that were *deleted* but still leak.
         if (seenSecretValues.has(hit.match)) continue;
-        findings.push({
+        const key = `${file}@${commit}`;
+        const label = `${hit.name} (\`${maskSecret(hit.match)}\`)`;
+        const existing = byLocation.get(key);
+        if (existing) {
+          existing.names.push(label);
+          existing.detail = `${existing.names.join(' and ')} first added in commit ${commit}.`;
+          continue;
+        }
+        const finding = {
           id: 'secret-in-history',
           severity: 'critical',
           file,
           commit,
           hasRemote: remoteExists,
-          detail: `${hit.name} (\`${maskSecret(hit.match)}\`) first added in commit ${commit}.`,
-        });
+          names: [label],
+          detail: `${label} first added in commit ${commit}.`,
+        };
+        byLocation.set(key, finding);
+        findings.push(finding);
       }
     }
   }
@@ -244,7 +259,7 @@ export function runGate(root, { quick = false } = {}) {
       notes.push('Could not run `npm audit` (offline or npm unavailable) — dependency check skipped.');
     }
   } else if (fs.existsSync(path.join(root, 'package.json'))) {
-    notes.push('No package-lock.json — dependency vulnerability check skipped.');
+    notes.push('No package-lock.json, so the dependency vulnerability check was skipped. Nothing to do unless your app uses npm packages — if it does, run `npm install` once to create that file.');
   }
 
   return { findings, notes, inGit };

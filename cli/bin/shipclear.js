@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
-import { applyFixes, resetHistory, GITIGNORE_BLOCK } from '../lib/fix.js';
+import { applyFixes, resetHistory, installHook, envExampleFrom, GITIGNORE_BLOCK } from '../lib/fix.js';
 import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/report.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
@@ -31,16 +31,6 @@ Everything runs locally. Nothing is uploaded, ever.
 Docs: https://github.com/adamtimmerberg/ShipClear
 `;
 
-const HOOK_SCRIPT = `#!/bin/sh
-# Installed by ShipClear (shipclear setup). Blocks commits containing secrets.
-# Remove this file to uninstall.
-if [ -x "./node_modules/.bin/shipclear" ]; then
-  exec ./node_modules/.bin/shipclear scan --staged
-else
-  exec npx --yes shipclear scan --staged
-fi
-`;
-
 function cmdSetup(root) {
   const done = [];
   const warnings = [];
@@ -48,28 +38,23 @@ function cmdSetup(root) {
   const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
   if (!gitignore.split('\n').some((l) => /^(\.env(\.\*)?|\*\.env|\.env\*)\s*$/.test(l.trim()))) {
     fs.writeFileSync(gitignorePath, gitignore + GITIGNORE_BLOCK);
-    done.push('.gitignore now excludes .env files (and the ShipClear report)');
+    done.push('.gitignore now excludes .env files (and the ShipClear report) — from now on; anything committed before this is a separate finding');
   }
-  if (!fs.existsSync(path.join(root, '.env'))) {
-    fs.writeFileSync(path.join(root, '.env'), '# Real values live here. This file is git-ignored — never commit it.\n');
+  const envPath = path.join(root, '.env');
+  if (!fs.existsSync(envPath)) {
+    fs.writeFileSync(envPath, '# Real values live here. This file is git-ignored — never commit it.\n');
     done.push('created .env (for real values — stays on your machine)');
   }
   if (!fs.existsSync(path.join(root, '.env.example'))) {
-    fs.writeFileSync(
-      path.join(root, '.env.example'),
-      '# Copy to .env and fill in real values. Never commit .env.\n'
-    );
-    done.push('created .env.example (safe-to-share template)');
+    // Same derivation the auto-fix uses: variable names from .env, values stripped.
+    fs.writeFileSync(path.join(root, '.env.example'), envExampleFrom(envPath));
+    done.push('created .env.example (your variable names, no values — safe to share)');
   }
   if (isGitRepo(root)) {
-    const hookDir = path.join(root, '.git', 'hooks');
-    const hookPath = path.join(hookDir, 'pre-commit');
-    if (fs.existsSync(hookPath) && !fs.readFileSync(hookPath, 'utf8').includes('ShipClear')) {
-      warnings.push('this project already has a pre-commit hook, so ShipClear left it alone — your commits are NOT yet protected. Add `shipclear scan --staged` as a line in that existing hook to turn protection on.');
-    } else {
-      fs.mkdirSync(hookDir, { recursive: true });
-      fs.writeFileSync(hookPath, HOOK_SCRIPT, { mode: 0o755 });
+    if (installHook(root)) {
       done.push('installed the commit guard (secrets can no longer be committed)');
+    } else {
+      warnings.push('this project already has a pre-commit hook, so ShipClear left it alone — your commits are NOT yet protected. Add `shipclear scan --staged` as a line in that existing hook to turn protection on.');
     }
   } else {
     warnings.push("this folder isn't set up with git yet, so ShipClear couldn't install the commit guard — the safety net that stops a secret from ever being committed. Run `git init` in this folder, then run `shipclear setup` again.");

@@ -24,7 +24,8 @@ npm run check:adapters  # adapters must match the canonical core
 1. **Detection patterns** live in `cli/lib/patterns.js`. Add a fixture that proves your pattern catches the real thing (and doesn't catch placeholders) in `tests/fixtures/`.
 2. **Prevention rules** live in `core/prevention.md` — the single source of truth. Never edit files under `adapters/` by hand; run `npm run build:adapters` to regenerate them.
 3. **Gate checks** live in `cli/lib/checks.js`, with their plain-English explanations in `cli/lib/report.js`.
-4. Run `npm test` and `npm run gate` before opening a PR.
+4. **Fixes** live in `cli/lib/fix.js`. `applyFixes` may only ever *add* protection (a `.gitignore` line, a values-stripped `.env.example`) — never delete, overwrite, or rewrite. The one destructive operation, `resetHistory`, is opt-in behind `--fix-history` and refuses whenever it would lose a remote, a branch, or a stash. Keep it that way: a fix that can destroy work must never run by default.
+5. Run `npm test` and `npm run gate` before opening a PR.
 
 ## Commit style
 
