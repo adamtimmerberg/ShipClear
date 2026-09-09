@@ -150,7 +150,9 @@ console.log('\nvulnerable-app (every planted issue must be found)');
   check('verdict is DO NOT SHIP', verdictOf(findings) === 'DO_NOT_SHIP', `got ${verdictOf(findings)}`);
 
   const fixes = applyFixes(dir, findings);
-  check('auto-fix repairs .gitignore', fs.readFileSync(path.join(dir, '.gitignore'), 'utf8').includes('.env'));
+  const gi = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8');
+  check('auto-fix repairs .gitignore', gi.includes('.env'));
+  check('auto-fix also keeps the findings map (SHIP-REPORT.md) out of git', gi.includes('SHIP-REPORT.md'));
   check('auto-fix reported', fixes.length >= 1);
   check('gitignore finding marked resolved',
     findings.find((f) => f.id === 'gitignore-incomplete')?.resolved === true);
@@ -301,6 +303,28 @@ console.log('\n--fix-history (safe automated history reset)');
       findings.filter((f) => f.id === 'secret-in-history').every((f) => f.resolved));
     check('a re-run gate is clean of history findings',
       !runGate(dir).findings.some((f) => f.id === 'secret-in-history'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // When git already has an identity, no placeholder is set and none is
+  // mentioned. Uses GIT_CONFIG_GLOBAL so the real global config is never
+  // touched (the git helper inherits process.env).
+  {
+    const { dir, git } = leakyRepo();
+    const fakeGlobal = path.join(dir, '.fake-gitconfig');
+    fs.writeFileSync(fakeGlobal, '[user]\n\temail = real@person.test\n\tname = Real Person\n');
+    const prev = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = fakeGlobal;
+    try {
+      const { findings } = runGate(dir);
+      const { done } = resetHistory(dir, findings);
+      check('with an existing git identity, no placeholder is set or mentioned',
+        !!done && !/placeholder/.test(done));
+      check('with an existing git identity, the fresh commit is authored as that person',
+        git('log', '-1', '--format=%ae').trim() === 'real@person.test');
+    } finally {
+      if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = prev;
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

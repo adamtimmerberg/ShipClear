@@ -2,11 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hasRemote, branchNames, hasStash, hasIdentity, run as git } from './git.js';
 
-const GITIGNORE_BLOCK = `
+// Single source for the block both `setup` and the auto-fix append. Ignores
+// SHIP-REPORT.md too: a committed report is a map of exactly where the
+// findings were ("secret at server.js:7, see commit e6c9969") — the last
+// thing to hand a stranger reading a public repo.
+export const GITIGNORE_BLOCK = `
 # Secrets — added by ShipClear
 .env
 .env.*
 !.env.example
+SHIP-REPORT.md
 `;
 
 /**
@@ -23,7 +28,7 @@ export function applyFixes(root, findings) {
       const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       fs.writeFileSync(file, existing + GITIGNORE_BLOCK);
       finding.resolved = true;
-      applied.push('Added `.env` protection to .gitignore (created it if missing).');
+      applied.push('Added `.env` protection to .gitignore (created it if missing), and kept SHIP-REPORT.md out of git too.');
     }
 
     if (finding.id === 'env-example-missing') {

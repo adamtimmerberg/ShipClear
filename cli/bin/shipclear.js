@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
-import { applyFixes, resetHistory } from '../lib/fix.js';
+import { applyFixes, resetHistory, GITIGNORE_BLOCK } from '../lib/fix.js';
 import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/report.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
@@ -47,8 +47,8 @@ function cmdSetup(root) {
   const gitignorePath = path.join(root, '.gitignore');
   const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
   if (!gitignore.split('\n').some((l) => /^(\.env(\.\*)?|\*\.env|\.env\*)\s*$/.test(l.trim()))) {
-    fs.writeFileSync(gitignorePath, gitignore + '\n# Secrets — added by ShipClear\n.env\n.env.*\n!.env.example\n');
-    done.push('.gitignore now excludes .env files');
+    fs.writeFileSync(gitignorePath, gitignore + GITIGNORE_BLOCK);
+    done.push('.gitignore now excludes .env files (and the ShipClear report)');
   }
   if (!fs.existsSync(path.join(root, '.env'))) {
     fs.writeFileSync(path.join(root, '.env'), '# Real values live here. This file is git-ignored — never commit it.\n');
