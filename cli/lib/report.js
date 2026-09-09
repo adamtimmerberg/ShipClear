@@ -52,7 +52,7 @@ const EXPLAIN = {
   'test-account': {
     title: 'A login is hardcoded in the app',
     why: 'AI assistants often create accounts like admin@… "just for testing". If it ships, anyone who reads the code can log in to your live app with it.',
-    fix: 'Delete the hardcoded credentials. If tests need an account, create it with random values at test time and keep them out of git.',
+    fix: 'Delete the hardcoded credentials — and know that whatever code checked against them (usually a login route) now needs a real replacement, or login simply stops working: an auth service like Supabase Auth, Clerk, Auth0, or NextAuth, or a lookup against real user records. If tests need an account, create it with random values at test time and keep them out of git.',
   },
   'dependency-vulns': {
     title: 'Dependencies have known security holes',

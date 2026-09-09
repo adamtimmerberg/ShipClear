@@ -15,6 +15,12 @@ Once it's open, make sure you're inside your project's folder (your AI assistant
 
 **If an `npx` command says `command not found`:** you'll also need [Node.js](https://nodejs.org) installed — it's what runs `npx`. Download the "LTS" version, install it like any other app, then try again. (If a *different* command says this — one that doesn't start with `npx` — that specific tool isn't installed; Node.js won't fix it.)
 
+## Which section below is yours?
+
+- You talk to your AI **in a browser tab** (Bolt, Lovable, Replit, v0, ChatGPT, Claude.ai) → [Use the standalone CLI](#use-the-standalone-cli-works-with-any-ai-tool-or-none).
+- You talk to your AI **inside your code editor or terminal** (Claude Code, Codex, Cursor, Gemini CLI) → find it by name below; you get the extra layers (prevention rules, commit guard).
+- Not sure, or none of the above → the standalone CLI works for everyone.
+
 ## Claude Code (recommended: the full plugin)
 
 ```
