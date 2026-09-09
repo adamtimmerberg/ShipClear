@@ -530,6 +530,19 @@ console.log('\ntest-account registry');
   check('a tracked .shipclear/test-accounts.json is a test-account finding',
     findings.some((f) => f.id === 'test-account' && f.file === '.shipclear/test-accounts.json'));
   fs.rmSync(dir, { recursive: true, force: true });
+
+  // Untracked (as the rules intend): the gate still reminds the user at
+  // launch time that these logins exist — without touching the verdict.
+  const dir2 = makeRepo('clean-app');
+  fs.mkdirSync(path.join(dir2, '.shipclear'));
+  fs.writeFileSync(path.join(dir2, '.shipclear', 'test-accounts.json'), `[${jsonPair}]\n`);
+  const r2 = runGate(dir2);
+  check('an untracked registry yields an info reminder',
+    r2.findings.some((f) => f.id === 'test-registry-present' && f.severity === 'info'));
+  check('…that does not change the verdict', verdictOf(r2.findings) === 'CLEARED');
+  check('…and is not mistaken for a committed one',
+    !r2.findings.some((f) => f.id === 'test-account'));
+  fs.rmSync(dir2, { recursive: true, force: true });
 }
 
 // --- the AI adapters must not run the destructive fix unasked ---

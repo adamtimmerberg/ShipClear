@@ -232,6 +232,11 @@ export function runGate(root, { quick = false } = {}) {
     }
   }
 
+  // --- generated test logins exist; the rules promise a launch-time reminder ---
+  if (fs.existsSync(path.join(root, '.shipclear', 'test-accounts.json'))) {
+    findings.push({ id: 'test-registry-present', severity: 'info', file: '.shipclear/test-accounts.json' });
+  }
+
   // --- .env exists but no template for teammates ---
   if (fs.existsSync(path.join(root, '.env')) && !allFilesHasTemplate(root, allFiles)) {
     findings.push({ id: 'env-example-missing', severity: 'info', file: '.env.example' });

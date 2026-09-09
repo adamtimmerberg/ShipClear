@@ -96,6 +96,11 @@ const EXPLAIN = {
     why: 'Local agent settings and session files can contain machine details, and occasionally pasted secrets. They are your workspace, not your product.',
     fix: (f) => `Run \`git rm -r --cached ${f.file || '<path>'}\` (stops tracking it; the file stays on your machine), add its folder to .gitignore, then \`git commit -m "stop tracking AI tool files"\`.`,
   },
+  'test-registry-present': {
+    title: 'Generated test logins exist on this machine',
+    why: 'Your AI kept the logins it made for testing in .shipclear/test-accounts.json (git-ignored, so not in the repo). If any of them were ever added to a real database, they are working logins to your live app.',
+    fix: 'Before launch: make sure none of these accounts exist in your production database, then delete .shipclear/test-accounts.json. Nothing to do in git — this is about your live app, not the code.',
+  },
   'env-example-missing': {
     title: 'No .env.example template exists',
     why: 'Not a leak — just a courtesy: a template tells collaborators (and AI agents) which settings exist without revealing any values.',
