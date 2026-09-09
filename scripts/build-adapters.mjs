@@ -6,7 +6,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+// Normalize on read: a CRLF-checked-out core file (Windows without
+// .gitattributes honored) would otherwise leave stray \r at the end of
+// every line after the .split('\n') calls below, and bake CRLF into every
+// generated adapter.
+const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
 
 const prevention = read('core/prevention.md');
 const checklist = read('core/gate-checklist.md');
@@ -115,11 +119,18 @@ ${shipSteps}
 const check = process.argv.includes('--check');
 let drift = false;
 
+// .gitattributes pins checkouts to LF, but this stays as defense-in-depth
+// against any environment where that isn't honored (a stale clone, an
+// editor that re-saves with CRLF) — normalize before comparing so line
+// endings alone are never mistaken for real drift.
+const normalizeEol = (s) => s.replace(/\r\n/g, '\n');
+
 for (const [rel, content] of Object.entries(OUTPUTS)) {
   const abs = path.join(root, rel);
   if (check) {
     const existing = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null;
-    if (existing !== content) {
+    const matches = existing !== null && normalizeEol(existing) === normalizeEol(content);
+    if (!matches) {
       console.error(`DRIFT: ${rel} does not match the canonical core. Run \`npm run build:adapters\`.`);
       drift = true;
     }

@@ -1,0 +1,7 @@
+# Force LF line endings on checkout regardless of platform or local git
+# config. Without this, Windows checkouts (core.autocrlf=true, the default
+# on GitHub's windows-latest runners and many Windows git installs) convert
+# these to CRLF, which breaks the generated-adapter drift check — the
+# generator always writes LF, so a CRLF file on disk looks like drift that
+# isn't real. See wiki/gotchas (private) for the incident this fixes.
+* text=auto eol=lf
