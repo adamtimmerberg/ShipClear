@@ -32,12 +32,12 @@ const EXPLAIN = {
   'key-file-tracked': {
     title: 'A private key file is checked into git',
     why: 'Private key files (.pem, id_rsa and friends) are the literal keys to servers and services. Anyone with the repo can log in as you.',
-    fix: 'Run `git rm --cached <file>`, add the filename to .gitignore, and generate a new key pair — the committed one can never be trusted again.',
+    fix: 'Run `git rm --cached <file>` to untrack it, add the filename to .gitignore, and then replace the key itself: go back to wherever it came from (AWS, Firebase, your hosting provider, an SSH keygen) and create a new one — the committed one can never be trusted again, even after it\'s untracked.',
   },
   'env-example-leak': {
     title: '.env.example contains a real-looking value',
     why: '.env.example is meant to be shared — it shows which settings exist, with the values blank. A real value here is a secret published on purpose.',
-    fix: 'Replace the value with nothing (KEY=) or an obvious placeholder. If the value was real, rotate it.',
+    fix: 'Replace the value with nothing (KEY=) or an obvious placeholder. If the value was real, rotate it — log in to whichever service issued it and generate a new one.',
   },
   'gitignore-incomplete': {
     title: '.env files are not protected by .gitignore',
@@ -62,7 +62,7 @@ const EXPLAIN = {
   'generic-secret': {
     title: 'A value that looks like a credential is hardcoded',
     why: 'Something named like a key, token, or password is assigned directly in the code. If it\'s real, it leaks with the repo.',
-    fix: 'If it\'s a real credential: move it to .env and rotate it. If it\'s a harmless placeholder, make it look like one (empty, or "REPLACE_ME") so scanners stay calm — or add the file to .shipclearignore.',
+    fix: 'If it\'s a real credential: move it to .env and rotate it (log in to whichever service issued it and generate a new one). If it\'s a harmless placeholder, make it look like one (empty, or "REPLACE_ME") so scanners stay calm — or add the file to .shipclearignore.',
   },
   'personal-path': {
     title: 'Your local file path (with your username) is in the code',
