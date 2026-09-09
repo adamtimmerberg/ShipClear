@@ -11,7 +11,7 @@ Every instruction below happens in a **terminal** — a text window where you ty
 - **Mac:** open the **Terminal** app (search for it with Spotlight, ⌘+Space).
 - **Windows:** open **PowerShell** or **Windows Terminal** from the Start menu.
 
-Once it's open, make sure you're inside your project's folder (your AI assistant can tell you the command for that if you're not sure), then type the commands below and press Enter.
+Once it's open, make sure you're inside your project's folder: type `cd ` (with a space), then the folder's path — e.g. `cd my-app` if it's right there, or on a Mac just drag the folder onto the terminal window to paste its path. Then type the commands below and press Enter.
 
 **If an `npx` command says `command not found`:** you'll also need [Node.js](https://nodejs.org) installed — it's what runs `npx`. Download the "LTS" version, install it like any other app, then try again. (If a *different* command says this — one that doesn't start with `npx` — that specific tool isn't installed; Node.js won't fix it.)
 

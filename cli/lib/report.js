@@ -1,38 +1,48 @@
 // Every finding gets three plain-English answers: what is this, why does it
 // matter, what do I do. If an explanation needs jargon, it gets rewritten.
+//
+// Fix texts that name a file are functions of the finding, so the reader
+// gets `git rm --cached signups.csv`, never `git rm --cached <file>` — an
+// independent test showed that placeholder alone is enough to stall a
+// first-time user. Every git step is a literal command: "commit" is not an
+// instruction to someone who has never run git.
+const untrackThenCommit = (file, what) =>
+  `Run \`git rm --cached ${file}\` — that only stops git tracking it; the file stays on your machine (git will print \`rm '${file}'\`, which looks like a deletion but isn't). Then save that change: \`git commit -m "stop tracking ${what}"\`.`;
+
+const dbUrlNote = ' (For a database URL, "the service" is wherever your database is hosted — change its password there.)';
+
 const EXPLAIN = {
   'secret-in-code': {
     title: 'A secret key is written directly in your code',
     why: 'Anyone who sees this code — on GitHub, in a screenshot, in your deployed app — can use this key as you, and you get the bill.',
-    fix: 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.',
+    fix: 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.' + dbUrlNote,
   },
   'secret-in-history': {
     title: 'A secret exists in your git history',
     why: 'Deleting a key from your code does not delete it from git — every past version stays downloadable. If this repo goes public, the old key goes public with it.',
-    // The one fix that genuinely needs different instructions depending on
-    // repo state — a static string here was the single biggest thing
-    // blocking a real first-time user from ever reaching a clean verdict
-    // (found via an independent fresh-eyes test, not assumed; a second
-    // independent test — see the git-add/identity gaps and the "what
-    // actually leaked" gap below — confirmed the fix worked and found the
-    // next layer of rough edges).
+    // Varies by repo state. A static "use filter-repo or BFG" pointer was
+    // the single thing that stopped the first independent test from ever
+    // reaching a clean verdict; the second found the gaps in the hand-typed
+    // path; the third found that running the reset *first* bakes every
+    // other open finding into the new root commit — hence "do this last".
     fix: (f) => {
       const seeIt = `(Want to see exactly what leaked? Run \`git show ${f.commit || '<commit>'} -- ${f.file || '<file>'}\`.)`;
+      const rotate = `Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one.${dbUrlNote}`;
       if (f.hasRemote) {
-        return `Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup): since this repo has already been pushed somewhere, deleting local history isn't enough — the old commit may still be out there too. Use a tool built for this: [git filter-repo](https://github.com/newren/git-filter-repo) (\`git filter-repo --path <file> --invert-paths\` removes a whole file from history) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) (simpler, made for exactly this). Either way you'll need to force-push afterward — if that sentence is unfamiliar, paste it into an AI chat or ask someone with git experience before running anything, since a force-push affects anyone else using this repo. ${seeIt}`;
+        return `${rotate} Step 2 (cleanup): since this repo has already been pushed somewhere, deleting local history isn't enough — the old commit may still be out there too. Use a tool built for this: [git filter-repo](https://github.com/newren/git-filter-repo) (\`git filter-repo --path <file> --invert-paths\` removes a whole file from history) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) (simpler, made for exactly this). Either way you'll need to force-push afterward — if that sentence is unfamiliar, paste it into an AI chat or ask someone with git experience before running anything, since a force-push affects anyone else using this repo. ${seeIt}`;
       }
-      return `Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the fix is to erase git's memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Easiest and safest: run \`shipclear ship --fix-history\` and ShipClear does it for you, in this folder, after checking it won't lose any branches or stashed work. To do it by hand instead: \`rm -rf .git && git init && git add -A && git commit -m "start"\` (Mac/Linux; on Windows delete the \`.git\` folder first, then run the rest) — if git then says "Please tell me who you are," run the two \`git config\` lines it shows you and repeat the commit. ${seeIt}`;
+      return `${rotate} Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the fix is to erase git's memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Do this LAST, after every other finding above is fixed — a fresh start saves your project exactly as it is right now, problems included. Easiest and safest: run \`shipclear ship --fix-history\` and ShipClear does it for you, in this folder, after checking it won't lose any other saved work. To do it by hand instead: \`rm -rf .git && git init && git add -A && git commit -m "start"\` (Mac/Linux; on Windows delete the \`.git\` folder first, then run the rest) — if git then says "Please tell me who you are," run the two \`git config\` lines it shows you and repeat the commit. ${seeIt}`;
     },
   },
   'env-tracked': {
     title: 'Your .env file is checked into git',
     why: 'The .env file is your box of secrets. Committing it means every secret inside ships with the repo, forever, to everyone who can see it.',
-    fix: 'Run `git rm --cached <file>` to untrack it (the file stays on your machine), commit, and rotate every key inside it. ShipClear has already made sure .gitignore prevents this happening again.',
+    fix: (f) => `This was saved into git before ShipClear's protection was in place — setup stops it happening again, but can't undo the past. ${untrackThenCommit(f.file || '.env', 'secrets file')} Then rotate every key inside it — log in to each service and generate new ones.${dbUrlNote} One more thing: because it was committed, its contents are also in your git history — that's the separate "secret exists in your git history" finding, and \`shipclear ship --fix-history\` clears it once everything else is fixed.`,
   },
   'key-file-tracked': {
     title: 'A private key file is checked into git',
     why: 'Private key files (.pem, id_rsa and friends) are the literal keys to servers and services. Anyone with the repo can log in as you.',
-    fix: 'Run `git rm --cached <file>` to untrack it, add the filename to .gitignore, and then replace the key itself: go back to wherever it came from (AWS, Firebase, your hosting provider, an SSH keygen) and create a new one — the committed one can never be trusted again, even after it\'s untracked.',
+    fix: (f) => `${untrackThenCommit(f.file || '<file>', 'key file')} Add its name (\`${f.file || '<file>'}\`) on its own line in .gitignore so it can't be re-added. Then replace the key itself: go back to wherever it came from (AWS, Firebase, your hosting provider, an SSH keygen) and create a new one — the committed one can never be trusted again, even after it's untracked.`,
   },
   'env-example-leak': {
     title: '.env.example contains a real-looking value',
@@ -47,12 +57,12 @@ const EXPLAIN = {
   'pii-data-file': {
     title: 'A data file with real-looking personal information is in the repo',
     why: 'Emails, SSNs, and customer records in a repo become public the moment the repo does. That is a privacy breach, and in many places a legal one.',
-    fix: 'Untrack the file (`git rm --cached <file>`), add it to .gitignore, and use made-up data for testing and seeding instead.',
+    fix: (f) => `${untrackThenCommit(f.file || '<file>', 'data file')} Add its name (\`${f.file || '<file>'}\`) on its own line in .gitignore so it can't be re-added. If this is real data your app needs, that's fine — it stays on the machine where the app runs, just not in the repo (and if it's a list of people, it probably belongs in a database with proper access controls rather than a file). For testing and demos, use made-up data.`,
   },
   'test-account': {
     title: 'A login is hardcoded in the app',
     why: 'AI assistants often create accounts like admin@… "just for testing". If it ships, anyone who reads the code can log in to your live app with it.',
-    fix: 'Delete the hardcoded credentials — and know that whatever code checked against them (usually a login route) now needs a real replacement, or login simply stops working: an auth service like Supabase Auth, Clerk, Auth0, or NextAuth, or a lookup against real user records. If tests need an account, create it with random values at test time and keep them out of git.',
+    fix: 'Delete the lines that define the credentials AND the lines that check against them — leaving the check behind makes login crash instead of merely not working. Then ask the AI assistant you built this with to replace it: tell it "replace the hardcoded login with a real login system." (If you want the names: Supabase Auth, Clerk, Auth0, and NextAuth are common choices — but you don\'t need to pick; your AI can.) If tests need an account, create it with random values at test time and keep them out of git.',
   },
   'dependency-vulns': {
     title: 'Dependencies have known security holes',
@@ -72,7 +82,7 @@ const EXPLAIN = {
   'agent-artifact': {
     title: 'AI-tool working files are checked into git',
     why: 'Local agent settings and session files can contain machine details, and occasionally pasted secrets. They are your workspace, not your product.',
-    fix: 'Untrack them (`git rm -r --cached <path>`) and add the folder to .gitignore.',
+    fix: (f) => `Run \`git rm -r --cached ${f.file || '<path>'}\` (stops tracking it; the file stays on your machine), add its folder to .gitignore, then \`git commit -m "stop tracking AI tool files"\`.`,
   },
   'env-example-missing': {
     title: 'No .env.example template exists',
@@ -95,7 +105,7 @@ export function verdictOf(findings) {
 
 export const VERDICT_TEXT = {
   DO_NOT_SHIP: '🛑 DO NOT SHIP — fix the critical findings first.',
-  SHIP_WITH_FIXES: '🟡 SHIP WITH FIXES — nothing catastrophic, but close the items below first.',
+  SHIP_WITH_FIXES: '🟡 SHIP WITH FIXES — nothing catastrophic, but close the items listed above first.',
   CLEARED: '✅ CLEARED TO SHIP — no blocking findings.',
 };
 
@@ -131,14 +141,15 @@ function location(f) {
 const color = (code, s) =>
   process.stdout.isTTY && !process.env.NO_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s;
 
-// Most fix texts are a plain string; secret-in-history's varies by repo
-// state (see EXPLAIN above), so it's a function of the finding instead.
+// Fix texts are either a plain string or a function of the finding (see
+// EXPLAIN above) — so the reader gets real file names and repo-specific
+// steps, never a `<file>` placeholder.
 const fixTextFor = (ex, f) => (typeof ex.fix === 'function' ? ex.fix(f) : ex.fix);
 
 export function renderTerminal({ findings, notes, verdict, fixes = [], version, quick = false }) {
   const lines = [];
   lines.push('');
-  lines.push(color('1', `  ShipClear v${version} — ship report`));
+  lines.push(color('1', `  ShipClear v${version} — ${quick ? 'quick scan' : 'ship report'}`));
   lines.push('');
 
   const open = sorted(findings.filter((f) => !f.resolved));
@@ -219,7 +230,7 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     out.push('');
     out.push('## Semantic checks — for your AI assistant');
     out.push('');
-    out.push('The scan above catches everything a pattern can catch. These six need code understanding — ask your AI assistant to work through them (the ShipClear adapters do this automatically):');
+    out.push('The scan above catches everything a pattern can catch. These need code understanding — ask your AI assistant to work through them (the ShipClear adapters do this automatically):');
     out.push('');
     out.push('- [ ] **Hidden accounts:** no route, seed, or conditional grants access via a fixed credential or magic string — including ones the AI created during development.');
     out.push('- [ ] **Auth and ownership:** every endpoint either requires authentication or is intentionally public; every resource access verifies the resource belongs to the requester (an ID alone is never enough).');
