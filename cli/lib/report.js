@@ -12,10 +12,17 @@ const EXPLAIN = {
     // The one fix that genuinely needs different instructions depending on
     // repo state — a static string here was the single biggest thing
     // blocking a real first-time user from ever reaching a clean verdict
-    // (found via an independent fresh-eyes test, not assumed).
-    fix: (f) => f.hasRemote
-      ? 'Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup): since this repo has already been pushed somewhere, deleting local history isn\'t enough — the old commit may still be out there too. Use a tool built for this: [git filter-repo](https://github.com/newren/git-filter-repo) (`git filter-repo --path <file> --invert-paths` removes a whole file from history) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) (simpler, made for exactly this). Either way you\'ll need to force-push afterward — if that sentence is unfamiliar, paste it into an AI chat or ask someone with git experience before running anything, since a force-push affects anyone else using this repo.'
-      : 'Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the simplest fix is to erase git\'s memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Run `rm -rf .git && git init` (Mac/Linux) or delete the `.git` folder and run `git init` (Windows), then commit your current code as a clean start.',
+    // (found via an independent fresh-eyes test, not assumed; a second
+    // independent test — see the git-add/identity gaps and the "what
+    // actually leaked" gap below — confirmed the fix worked and found the
+    // next layer of rough edges).
+    fix: (f) => {
+      const seeIt = `(Want to see exactly what leaked? Run \`git show ${f.commit || '<commit>'} -- ${f.file || '<file>'}\`.)`;
+      if (f.hasRemote) {
+        return `Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup): since this repo has already been pushed somewhere, deleting local history isn't enough — the old commit may still be out there too. Use a tool built for this: [git filter-repo](https://github.com/newren/git-filter-repo) (\`git filter-repo --path <file> --invert-paths\` removes a whole file from history) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) (simpler, made for exactly this). Either way you'll need to force-push afterward — if that sentence is unfamiliar, paste it into an AI chat or ask someone with git experience before running anything, since a force-push affects anyone else using this repo. ${seeIt}`;
+      }
+      return `Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the simplest fix is to erase git's memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Run: \`rm -rf .git && git init && git add -A && git commit -m "start"\` (Mac/Linux; on Windows, delete the \`.git\` folder yourself first, then run \`git init && git add -A && git commit -m "start"\`). Two things git might print along the way, both harmless: a note about the default branch name (ignore it), or "Please tell me who you are" — if you see that, run the two \`git config --global user.email/user.name\` lines it shows you, then just run the \`git commit\` part again. ${seeIt}`;
+    },
   },
   'env-tracked': {
     title: 'Your .env file is checked into git',
@@ -92,6 +99,19 @@ export const VERDICT_TEXT = {
   CLEARED: '✅ CLEARED TO SHIP — no blocking findings.',
 };
 
+// `scan` deliberately skips slower checks (full git history, dependency
+// audits — see checks.js's `quick` mode) so it can run instantly. Its
+// verdict must never be visually or textually confusable with the real
+// ship/no-ship call from the full gate — a quick scan saying "CLEARED TO
+// SHIP" is exactly the false-GO failure mode this project treats as its
+// worst case (see CONTRIBUTING.md). Found by an independent fresh-eyes
+// test that ran `scan`, saw this exact banner, and nearly stopped there.
+const QUICK_VERDICT_TEXT = {
+  DO_NOT_SHIP: '🛑 Secrets found in this quick check — do not ship yet.',
+  SHIP_WITH_FIXES: '🟡 Issues found in this quick check.',
+  CLEARED: '✅ No secrets found in this quick check — but this is NOT the full gate.',
+};
+
 export const BADGE_MARKDOWN =
   '[![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)](https://github.com/adamtimmerberg/ShipClear)';
 
@@ -115,7 +135,7 @@ const color = (code, s) =>
 // state (see EXPLAIN above), so it's a function of the finding instead.
 const fixTextFor = (ex, f) => (typeof ex.fix === 'function' ? ex.fix(f) : ex.fix);
 
-export function renderTerminal({ findings, notes, verdict, fixes = [], version }) {
+export function renderTerminal({ findings, notes, verdict, fixes = [], version, quick = false }) {
   const lines = [];
   lines.push('');
   lines.push(color('1', `  ShipClear v${version} — ship report`));
@@ -139,15 +159,17 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version }
   }
   for (const note of notes) lines.push(`  note: ${note}`);
   lines.push('');
-  const v = VERDICT_TEXT[verdict];
+  const v = quick ? QUICK_VERDICT_TEXT[verdict] : VERDICT_TEXT[verdict];
   lines.push('  ' + color(verdict === 'CLEARED' ? '32;1' : verdict === 'DO_NOT_SHIP' ? '31;1' : '33;1', v));
-  if (verdict === 'CLEARED') {
+  // The badge claims "cleared to ship" — only the full gate has earned
+  // that claim. Never offer it off the back of a quick, partial check.
+  if (verdict === 'CLEARED' && !quick) {
     lines.push('');
     lines.push('  Show it off — add the badge to your README:');
     lines.push('  ' + BADGE_MARKDOWN);
   }
   lines.push('');
-  lines.push('  Full report written to SHIP-REPORT.md');
+  lines.push(quick ? '  This was a quick check only. For the full gate: shipclear ship' : '  Full report written to SHIP-REPORT.md');
   lines.push('');
   return lines.join('\n');
 }

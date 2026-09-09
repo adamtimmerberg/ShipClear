@@ -114,8 +114,7 @@ function cmdScanStaged(root, quiet) {
 function cmdScan(root) {
   const { findings, notes } = runGate(root, { quick: true });
   const verdict = verdictOf(findings);
-  console.log(renderTerminal({ findings, notes, verdict, version: pkg.version })
-    .replace('  Full report written to SHIP-REPORT.md\n', '  For the full gate: shipclear ship\n'));
+  console.log(renderTerminal({ findings, notes, verdict, version: pkg.version, quick: true }));
   return findings.some((f) => f.severity === 'critical') ? 1 : 0;
 }
 

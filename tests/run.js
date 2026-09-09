@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { applyFixes } from '../cli/lib/fix.js';
-import { verdictOf, renderMarkdown, EXPLAIN } from '../cli/lib/report.js';
+import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -196,9 +196,38 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
     /force-push/i.test(hasRemoteFix));
   check('both cases lead with rotation as the action that actually protects you',
     /^Step 1.*rotate the key now/.test(noRemoteFix) && /^Step 1.*rotate the key now/.test(hasRemoteFix));
+
+  // A second independent test verified the fix above actually worked, then
+  // found the next layer: the no-remote command never mentioned `git add`
+  // (so `git init` alone leaves nothing committed), and two unrelated git
+  // prompts (branch-name hint, missing identity) weren't anticipated.
+  check('no-remote case includes git add, not just init',
+    /git add -A/.test(noRemoteFix));
+  check('no-remote case warns about the "who you are" identity prompt',
+    /Please tell me who you are|user\.email/.test(noRemoteFix));
+  check('both cases point at how to actually see what leaked',
+    /git show/.test(noRemoteFix) && /git show/.test(hasRemoteFix));
 }
 
 // --- integration: clean fixture ---
+// --- scan's quick "cleared" must never look like ship's real verdict ---
+// A second independent test ran `scan`, saw the exact same "CLEARED TO
+// SHIP" banner `ship` gives after the FULL gate, and nearly stopped there
+// — `scan` deliberately skips the git-history check, so that would have
+// been a false all-clear. This is the "no false GO verdicts" rule from
+// CONTRIBUTING.md, concretely violated and now concretely fixed.
+console.log('\nquick scan verdict is never confusable with the full gate\'s');
+{
+  const args = { findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0' };
+  const full = renderTerminal(args);
+  const quick = renderTerminal({ ...args, quick: true });
+  check('full gate says CLEARED TO SHIP', full.includes(VERDICT_TEXT.CLEARED));
+  check('quick scan does NOT say CLEARED TO SHIP', !quick.includes(VERDICT_TEXT.CLEARED));
+  check('quick scan verdict text differs from the full gate\'s', full !== quick);
+  check('quick scan never offers the ship-worthy badge', !quick.includes('add the badge'));
+  check('full gate on a real CLEARED verdict does offer the badge', full.includes('add the badge'));
+}
+
 console.log('\nclean-app (no false alarms)');
 {
   const dir = makeRepo('clean-app');
