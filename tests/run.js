@@ -499,6 +499,20 @@ console.log('\ngit commit guard');
   }
 }
 
+// --- the AI adapters must not run the destructive fix unasked ---
+// The Claude Code /safe-to-ship command tells an agent to run ship and act
+// on the report. Nothing else would stop it from running --fix-history for
+// the user; that decision must stay human.
+console.log('\nadapters');
+{
+  const cmd = fs.readFileSync(path.join(here, '../adapters/claude-code/commands/safe-to-ship.md'), 'utf8');
+  const generic = fs.readFileSync(path.join(here, '../adapters/generic/INSTRUCTIONS.md'), 'utf8');
+  check('/safe-to-ship tells the agent never to run --fix-history unasked',
+    /Never run `shipclear ship --fix-history` on the user's behalf/.test(cmd));
+  check('generic instructions carry the same rule',
+    /Never run `shipclear ship --fix-history` on the user's behalf/.test(generic));
+}
+
 // --- CLI smoke test ---
 console.log('\ncli');
 {

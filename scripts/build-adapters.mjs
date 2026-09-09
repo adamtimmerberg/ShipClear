@@ -31,6 +31,7 @@ const shipSteps = `## How to run the gate
 
 1. Run the deterministic scan: \`npx --yes shipclear ship\` (it writes \`SHIP-REPORT.md\` and applies safe fixes automatically).
 2. Read \`SHIP-REPORT.md\` and walk the user through each finding in plain English.
+   - **Never run \`shipclear ship --fix-history\` on the user's behalf.** It erases git history. If a finding recommends it, explain what it does, confirm the other findings are fixed first, and let the user run it — or run it only after they explicitly say to.
 3. Perform the semantic checks below yourself — these need code understanding and are your responsibility:
 
 ${semantic}

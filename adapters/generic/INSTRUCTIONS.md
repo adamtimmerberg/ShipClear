@@ -41,6 +41,7 @@ These rules are for AI coding agents and assistants. Follow them on every task, 
 
 1. Run the deterministic scan: `npx --yes shipclear ship` (it writes `SHIP-REPORT.md` and applies safe fixes automatically).
 2. Read `SHIP-REPORT.md` and walk the user through each finding in plain English.
+   - **Never run `shipclear ship --fix-history` on the user's behalf.** It erases git history. If a finding recommends it, explain what it does, confirm the other findings are fixed first, and let the user run it — or run it only after they explicitly say to.
 3. Perform the semantic checks below yourself — these need code understanding and are your responsibility:
 
 1. **Hidden accounts:** search for any route, seed, migration, or conditional that grants access via a fixed credential, magic string, or special email — including ones the AI itself created during this project. Check `.shipclear/test-accounts.json` and confirm every listed credential is absent from code and the production database plan.
