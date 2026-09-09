@@ -17,6 +17,7 @@ This is the full specification of what `shipclear ship` verifies (deterministic 
 | `dependency-vulns` | Known CVEs in dependencies (`npm audit`, high and critical) | high |
 | `generic-secret` | Suspicious hardcoded values assigned to names like `apiKey`, `password`, `token` | medium |
 | `tls-verification-off` | Certificate checking disabled (`rejectUnauthorized: false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`, `verify=False`) | medium |
+| `debug-mode-on` | Framework debug mode left on in shipped code (`app.run(debug=True)`, `FLASK_DEBUG=1`) | medium |
 | `personal-path` | Absolute paths exposing local usernames (`/home/adam/...`, `C:\Users\...`) | low |
 | `agent-artifact` | AI-session artifacts (local agent settings, transcripts) tracked by git | low |
 | `env-example-missing` | `.env` exists but `.env.example` doesn't | info |

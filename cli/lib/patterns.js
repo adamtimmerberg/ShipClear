@@ -183,6 +183,14 @@ export const TLS_VERIFICATION_OFF = /rejectUnauthorized\s*:\s*false|NODE_TLS_REJ
 // The leading lookbehind requires an absolute-path boundary, so a real home
 // path matches but the `/home/` inside an import like `components/home/card`
 // does not (found the hard way on the precedent starter repo).
+// Flask/Werkzeug debug mode left on in code that ships. Scoped to the
+// genuinely dangerous form — a Flask app.run call with debug enabled, or the
+// FLASK_DEBUG env flag — not Django's dev-default DEBUG setting, which would
+// drown users in false positives. Debug mode exposes an interactive Python
+// console to anyone who triggers an error: remote code execution. (Examples
+// live in tests, worded so they don't match this scanned file.)
+export const DEBUG_MODE_ON = /\.run\([^)]*\bdebug\s*=\s*True|FLASK_DEBUG\s*[:=]\s*['"]?1\b|FLASK_ENV\s*[:=]\s*['"]?development\b/g;
+
 export const PERSONAL_PATH = /(?<![\w./-])(?:\/(?:home|Users)\/[A-Za-z0-9._-]{3,}|[A-Z]:\\Users\\[A-Za-z0-9._-]{3,})/g;
 
 const IMPERSONAL_PATH_USERS = new Set([

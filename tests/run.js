@@ -124,6 +124,26 @@ console.log('\ntls verification off');
   check('does not flag the Python verify flag set true', !hits('requests.get(url, ' + 'verify=True)'));
 }
 
+// --- unit: framework debug mode on ---
+// Real gap found by the first Python-project test — the audience isn't
+// only Node. Scoped to the dangerous form (Flask app.run debug=True /
+// FLASK_DEBUG), not Django's DEBUG=True dev default.
+console.log('\ndebug mode on');
+{
+  const { DEBUG_MODE_ON } = await import('../cli/lib/patterns.js');
+  const hits = (s) => { DEBUG_MODE_ON.lastIndex = 0; return DEBUG_MODE_ON.test(s); };
+  // Build the dangerous token at runtime so no matchable literal sits in
+  // this scanned file (the pattern's [^)]* would otherwise span a naive
+  // '+' concatenation — see the debug self-flag fix in the log).
+  const on = 'debug' + '=' + 'True';
+  const flaskFlag = 'FLASK_' + 'DEBUG' + '=1';
+  check('catches a Flask app.run call in debug mode', hits(`app.run(${on})`));
+  check('catches app.run with host arg then debug on', hits(`app.run(host="0.0.0.0", ${on})`));
+  check('catches the FLASK_DEBUG env flag', hits(flaskFlag));
+  check('does not flag debug turned off', !hits('app.run(' + 'debug=False)'));
+  check('does not flag a plain debug variable', !hits('const ' + 'debug = someValue;'));
+}
+
 // --- unit: false-positive regressions (each vector found on a real repo) ---
 console.log('\nfalse-positive regressions (from the real-world sweep)');
 {

@@ -107,6 +107,11 @@ const EXPLAIN = {
     why: 'Something named like a key, token, or password is assigned directly in the code. If it\'s real, it leaks with the repo.',
     fix: 'If it\'s a real credential: move it to .env and rotate it (log in to whichever service issued it and generate a new one). If it\'s a harmless placeholder, make it look like one (empty, or "REPLACE_ME") so scanners stay calm — or add the file to .shipclearignore.',
   },
+  'debug-mode-on': {
+    title: 'Debug mode is switched on',
+    why: 'With debug mode on, anyone who triggers an error in your live app gets an interactive Python console in their browser — which is full control of your server. It is meant only for your own machine while building.',
+    fix: 'This is fine while you build locally, but it must be off in the version that runs for real. Remove `debug=True` (or read it from an environment variable that is off in production). If your host runs the app for you, make sure it is not started in development mode.',
+  },
   'tls-verification-off': {
     title: 'Certificate checking is switched off',
     why: 'This line tells your app to trust any server, even a fake one — so anyone on the same network (a café, a hotel) can sit between your app and the real service and read or change what passes through, including your API keys.',

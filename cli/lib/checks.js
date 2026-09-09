@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import {
   findSecrets, looksPlaceholder, entropy, maskSecret, lineOfIndex,
   realLookingEmails, SSN, PASSWORD_ASSIGNMENT, SUSPICIOUS_ACCOUNT_EMAIL,
-  personalPaths, TLS_VERIFICATION_OFF,
+  personalPaths, TLS_VERIFICATION_OFF, DEBUG_MODE_ON,
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
@@ -94,6 +94,18 @@ export function runGate(root, { quick = false } = {}) {
           file: rel,
           line: lineOfIndex(content, tls.index),
           detail: `\`${tls[0].trim()}\``,
+        });
+      }
+
+      DEBUG_MODE_ON.lastIndex = 0;
+      let dbg;
+      while ((dbg = DEBUG_MODE_ON.exec(content))) {
+        findings.push({
+          id: 'debug-mode-on',
+          severity: 'medium',
+          file: rel,
+          line: lineOfIndex(content, dbg.index),
+          detail: `\`${dbg[0].trim()}\``,
         });
       }
 
@@ -289,6 +301,22 @@ export function runGate(root, { quick = false } = {}) {
     }
   } else if (fs.existsSync(path.join(root, 'package.json'))) {
     notes.push('No package-lock.json, so the dependency vulnerability check was skipped. If your package.json has a "dependencies" section, run `npm install` once to create that file; otherwise there is nothing to do.');
+  } else {
+    // Non-npm project (Python, Ruby, Go, Rust, PHP…). The built-in check is
+    // npm-only; osv-scanner covers every ecosystem but isn't installed, so
+    // point the user at how to check their own stack rather than going
+    // silent — a vibe-coded Flask app can easily pin a flask version with
+    // known CVEs and never hear about it.
+    const PY = ['requirements.txt', 'Pipfile', 'pyproject.toml', 'poetry.lock'];
+    const other = { 'Gemfile': 'bundler-audit', 'go.mod': 'govulncheck', 'Cargo.toml': 'cargo audit', 'composer.json': 'composer audit' };
+    if (PY.some((f) => fs.existsSync(path.join(root, f)))) {
+      notes.push('This looks like a Python project. ShipClear\'s built-in dependency check is npm-only — to check your Python packages for known vulnerabilities, run `pip install pip-audit && pip-audit`, or install osv-scanner and ShipClear will use it automatically next time.');
+    } else {
+      const manifest = Object.keys(other).find((f) => fs.existsSync(path.join(root, f)));
+      if (manifest) {
+        notes.push(`Dependency check skipped — ShipClear's built-in check is npm-only. For this project, run \`${other[manifest]}\`, or install osv-scanner and ShipClear will check ${manifest} automatically next time.`);
+      }
+    }
   }
 
   return { findings, notes, inGit };
