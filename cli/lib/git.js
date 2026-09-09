@@ -36,6 +36,35 @@ export function hasRemote(root) {
   }
 }
 
+export function branchNames(root) {
+  try {
+    return git(root, ['branch', '--format=%(refname:short)']).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function hasStash(root) {
+  try {
+    return git(root, ['stash', 'list']).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether git has a user identity it could commit with (global or local). */
+export function hasIdentity(root) {
+  try {
+    return git(root, ['config', 'user.email']).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function run(root, args) {
+  return git(root, args);
+}
+
 export function trackedFiles(root) {
   return git(root, ['ls-files']).split('\n').filter(Boolean);
 }

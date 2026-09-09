@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
-import { applyFixes } from '../cli/lib/fix.js';
+import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 
@@ -261,6 +261,67 @@ console.log('\nhistory (deleting a secret does not un-leak it)');
     !findings.some((f) => f.id === 'secret-in-code'));
   check('verdict is DO NOT SHIP', verdictOf(findings) === 'DO_NOT_SHIP');
   fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- --fix-history: the one destructive fix, opt-in, with guardrails ---
+// The alternative was telling a first-time user to type `rm -rf .git` by
+// hand, with nothing checking the directory, branches, or stashes. This
+// runs on exactly the scanned folder and refuses wherever "start fresh"
+// would silently destroy something a hand-typed command wouldn't notice.
+console.log('\n--fix-history (safe automated history reset)');
+{
+  const gitIn = (dir) => (...args) =>
+    execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
+      '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  const leakyRepo = () => {
+    const dir = makeRepo('clean-app');
+    const git = gitIn(dir);
+    fs.writeFileSync(path.join(dir, 'oops.js'), `const key = "${FAKE_ANTHROPIC_KEY}";\n`);
+    git('add', 'oops.js'); git('commit', '-q', '-m', 'leak');
+    fs.writeFileSync(path.join(dir, 'oops.js'), '// moved\n');
+    git('add', 'oops.js'); git('commit', '-q', '-m', 'removed');
+    return { dir, git };
+  };
+
+  // Happy path: no remote, one branch, no stash.
+  {
+    const { dir, git } = leakyRepo();
+    const branchBefore = git('branch', '--show-current').trim();
+    const { findings } = runGate(dir);
+    check('setup: secret is in history before reset', findings.some((f) => f.id === 'secret-in-history'));
+    const { done, refused } = resetHistory(dir, findings);
+    check('reset ran (not refused)', !!done && !refused, refused);
+    check('done message insists the key still needs rotating', /rotate the key/.test(done || ''));
+    check('secret is gone from all history afterward',
+      !git('log', '--all', '-p').includes(FAKE_ANTHROPIC_KEY));
+    check('exactly one fresh commit remains', git('log', '--oneline').trim().split('\n').length === 1);
+    check('branch name preserved (no silent main→master rename)',
+      git('branch', '--show-current').trim() === branchBefore);
+    check('history finding marked resolved',
+      findings.filter((f) => f.id === 'secret-in-history').every((f) => f.resolved));
+    check('a re-run gate is clean of history findings',
+      !runGate(dir).findings.some((f) => f.id === 'secret-in-history'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // Refusals: each must leave .git and the history completely untouched.
+  const refuses = [
+    ['a remote is configured', (git) => git('remote', 'add', 'origin', 'https://example.com/x.git'), /remote/],
+    ['a second branch exists', (git) => git('branch', 'feature'), /2 branches/],
+    ['there are stashed changes', (git, dir) => { fs.writeFileSync(path.join(dir, 'wip.txt'), 'wip\n'); git('add', 'wip.txt'); git('stash', '-q'); }, /stash/],
+  ];
+  for (const [why, setup, reason] of refuses) {
+    const { dir, git } = leakyRepo();
+    setup(git, dir);
+    const before = git('log', '--all', '--oneline');
+    const { findings } = runGate(dir);
+    const { done, refused } = resetHistory(dir, findings);
+    check(`refuses when ${why}`, !done && reason.test(refused || ''), refused);
+    check(`history untouched when ${why}`, git('log', '--all', '--oneline') === before);
+    check(`finding stays unresolved when ${why}`,
+      findings.some((f) => f.id === 'secret-in-history' && !f.resolved));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // --- CLI smoke test ---

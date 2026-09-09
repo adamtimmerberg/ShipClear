@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
-import { applyFixes } from '../lib/fix.js';
+import { applyFixes, resetHistory } from '../lib/fix.js';
 import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/report.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
@@ -22,6 +22,10 @@ Usage:
   shipclear scan --staged  Scan only what's about to be committed (used by the guard)
   shipclear ship           Full safe-to-ship gate → SHIP-REPORT.md + verdict
   shipclear ship --no-fix  Same, but don't apply automatic fixes
+  shipclear ship --fix-history
+                           Also erase git history to remove a leaked secret from
+                           old commits (only when nothing was ever pushed; refuses
+                           if it would lose branches or stashes)
 
 Everything runs locally. Nothing is uploaded, ever.
 Docs: https://github.com/adamtimmerberg/ShipClear
@@ -118,9 +122,22 @@ function cmdScan(root) {
   return findings.some((f) => f.severity === 'critical') ? 1 : 0;
 }
 
-function cmdShip(root, { fix = true } = {}) {
-  const { findings, notes } = runGate(root);
+function cmdShip(root, { fix = true, fixHistory = false } = {}) {
+  let { findings, notes } = runGate(root);
   const fixes = fix ? applyFixes(root, findings) : [];
+
+  if (fixHistory) {
+    const { done, refused } = resetHistory(root, findings);
+    if (done) {
+      fixes.push(done);
+      // History is gone — re-run the gate so the verdict reflects the
+      // repo as it now is, not as it was before the reset.
+      ({ findings, notes } = runGate(root));
+    } else {
+      notes.push(`--fix-history was not applied: ${refused}`);
+    }
+  }
+
   const verdict = verdictOf(findings);
   const result = { findings, notes, verdict, fixes, version: pkg.version };
   fs.writeFileSync(path.join(root, 'SHIP-REPORT.md'), renderMarkdown(result));
@@ -143,9 +160,13 @@ try {
         ? cmdScanStaged(root, args.includes('--quiet'))
         : cmdScan(root);
       break;
-    case 'ship':
-      exitCode = cmdShip(root, { fix: !args.includes('--no-fix') });
+    case 'ship': {
+      const fixHistory = args.includes('--fix-history');
+      // A history reset needs .gitignore in place first so the fresh commit
+      // doesn't re-add .env — so --fix-history implies the additive fixes.
+      exitCode = cmdShip(root, { fix: !args.includes('--no-fix') || fixHistory, fixHistory });
       break;
+    }
     case '--version':
     case '-v':
       console.log(pkg.version);
