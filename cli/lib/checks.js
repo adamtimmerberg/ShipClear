@@ -9,7 +9,7 @@ import {
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
-import { isGitRepo, hasCommits, trackedFiles, historyAddedLines } from './git.js';
+import { isGitRepo, hasCommits, hasRemote, trackedFiles, historyAddedLines } from './git.js';
 
 const ENV_FILE = /^\.env(?:\..+)?$/;
 // Covers .env.example but also .env.local.example, .env.production.sample,
@@ -183,6 +183,7 @@ export function runGate(root, { quick = false } = {}) {
 
   // --- secrets anywhere in git history, even if since deleted ---
   if (inGit && hasCommits(root)) {
+    const remoteExists = hasRemote(root);
     const seen = new Set();
     for (const { commit, file, text } of historyAddedLines(root)) {
       if (ignored(file)) continue;
@@ -198,6 +199,7 @@ export function runGate(root, { quick = false } = {}) {
           severity: 'critical',
           file,
           commit,
+          hasRemote: remoteExists,
           detail: `${hit.name} (\`${maskSecret(hit.match)}\`) first added in commit ${commit}.`,
         });
       }

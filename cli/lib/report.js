@@ -4,12 +4,18 @@ const EXPLAIN = {
   'secret-in-code': {
     title: 'A secret key is written directly in your code',
     why: 'Anyone who sees this code — on GitHub, in a screenshot, in your deployed app — can use this key as you, and you get the bill.',
-    fix: 'Move the value into your .env file and read it from an environment variable. Then rotate the key: log in to the provider and generate a new one, because this one is burned.',
+    fix: 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.',
   },
   'secret-in-history': {
     title: 'A secret exists in your git history',
     why: 'Deleting a key from your code does not delete it from git — every past version stays downloadable. If this repo goes public, the old key goes public with it.',
-    fix: 'Rotate the key now (generate a new one at the provider — this is the step that actually protects you). To also scrub history before going public, use `git filter-repo` or BFG Repo-Cleaner; ShipClear never rewrites history for you.',
+    // The one fix that genuinely needs different instructions depending on
+    // repo state — a static string here was the single biggest thing
+    // blocking a real first-time user from ever reaching a clean verdict
+    // (found via an independent fresh-eyes test, not assumed).
+    fix: (f) => f.hasRemote
+      ? 'Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup): since this repo has already been pushed somewhere, deleting local history isn\'t enough — the old commit may still be out there too. Use a tool built for this: [git filter-repo](https://github.com/newren/git-filter-repo) (`git filter-repo --path <file> --invert-paths` removes a whole file from history) or [BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) (simpler, made for exactly this). Either way you\'ll need to force-push afterward — if that sentence is unfamiliar, paste it into an AI chat or ask someone with git experience before running anything, since a force-push affects anyone else using this repo.'
+      : 'Step 1 (does the actual protecting): rotate the key now — log in to whichever service issued it and generate a new one. Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the simplest fix is to erase git\'s memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Run `rm -rf .git && git init` (Mac/Linux) or delete the `.git` folder and run `git init` (Windows), then commit your current code as a clean start.',
   },
   'env-tracked': {
     title: 'Your .env file is checked into git',
@@ -105,6 +111,10 @@ function location(f) {
 const color = (code, s) =>
   process.stdout.isTTY && !process.env.NO_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s;
 
+// Most fix texts are a plain string; secret-in-history's varies by repo
+// state (see EXPLAIN above), so it's a function of the finding instead.
+const fixTextFor = (ex, f) => (typeof ex.fix === 'function' ? ex.fix(f) : ex.fix);
+
 export function renderTerminal({ findings, notes, verdict, fixes = [], version }) {
   const lines = [];
   lines.push('');
@@ -118,7 +128,7 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version }
     if (location(f)) lines.push(`      where: ${location(f)}${f.detail ? ` — ${f.detail}` : ''}`);
     else if (f.detail) lines.push(`      ${f.detail}`);
     lines.push(`      why it matters: ${ex.why}`);
-    lines.push(`      what to do: ${ex.fix}`);
+    lines.push(`      what to do: ${fixTextFor(ex, f)}`);
     lines.push('');
   }
   if (open.length === 0) lines.push('  No findings. Nice.');
@@ -170,7 +180,7 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
       if (location(f)) out.push(`- **Where:** \`${location(f)}\`${f.detail ? ` — ${f.detail}` : ''}`);
       else if (f.detail) out.push(`- **Detail:** ${f.detail}`);
       out.push(`- **Why it matters:** ${ex.why}`);
-      out.push(`- **What to do:** ${ex.fix}`);
+      out.push(`- **What to do:** ${fixTextFor(ex, f)}`);
     }
   }
   if (fixes.length) {

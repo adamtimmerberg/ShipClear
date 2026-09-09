@@ -176,6 +176,28 @@ console.log('\nreport text (no false "already fixed" claims)');
   }
 }
 
+// --- secret-in-history: guidance must actually differ by repo state ---
+// (a static "use git filter-repo or BFG" pointer was the single thing that
+// stopped an independent fresh-eyes test from ever reaching a clean verdict
+// — see the commit that added this. The no-remote case has a real,
+// copy-pasteable easy path; the has-remote case still names real tools with
+// a real example command instead of just naming them.)
+console.log('\nsecret-in-history guidance (varies by repo state)');
+{
+  const noRemoteFix = EXPLAIN['secret-in-history'].fix({ hasRemote: false });
+  const hasRemoteFix = EXPLAIN['secret-in-history'].fix({ hasRemote: true });
+  check('no-remote case gives a concrete, runnable command',
+    /rm -rf \.git && git init/.test(noRemoteFix));
+  check('no-remote case never mentions force-push (not needed — nothing was ever pushed)',
+    !/force-push/i.test(noRemoteFix));
+  check('has-remote case names a real tool with a real example command',
+    /git filter-repo --path/.test(hasRemoteFix));
+  check('has-remote case warns about force-push',
+    /force-push/i.test(hasRemoteFix));
+  check('both cases lead with rotation as the action that actually protects you',
+    /^Step 1.*rotate the key now/.test(noRemoteFix) && /^Step 1.*rotate the key now/.test(hasRemoteFix));
+}
+
 // --- integration: clean fixture ---
 console.log('\nclean-app (no false alarms)');
 {

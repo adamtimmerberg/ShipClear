@@ -27,6 +27,15 @@ export function hasCommits(root) {
   }
 }
 
+/** Whether this repo has any remote configured (e.g. pushed to GitHub). */
+export function hasRemote(root) {
+  try {
+    return git(root, ['remote']).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function trackedFiles(root) {
   return git(root, ['ls-files']).split('\n').filter(Boolean);
 }

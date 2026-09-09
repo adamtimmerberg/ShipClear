@@ -6,14 +6,14 @@ Every path below ends the same way: run `npx shipclear ship` before you deploy o
 
 Every instruction below happens in a **terminal** — a text window where you type commands instead of clicking buttons. If you've only ever built with AI tools in the browser, here's where to find one:
 
-- **Bolt.new / Lovable / Replit / v0:** look for a "Terminal" or "Console" tab or panel, usually near the bottom of the screen or behind a `>_` icon.
+- **Bolt.new / Lovable / Replit / v0:** look for a "Terminal" or "Console" tab or panel, usually near the bottom of the screen or behind a `>_` icon. Once you find it, skip straight to **["Use the standalone CLI"](#use-the-standalone-cli-works-with-any-ai-tool-or-none)** below — these tools' AI runs in your browser, not as a terminal agent ShipClear plugs into, so that's the section for you.
 - **Cursor / VS Code:** the menu bar → **Terminal → New Terminal**.
 - **Mac:** open the **Terminal** app (search for it with Spotlight, ⌘+Space).
 - **Windows:** open **PowerShell** or **Windows Terminal** from the Start menu.
 
 Once it's open, make sure you're inside your project's folder (your AI assistant can tell you the command for that if you're not sure), then type the commands below and press Enter.
 
-**If a command says `command not found`:** you'll also need [Node.js](https://nodejs.org) installed — it's what runs `npx`. Download the "LTS" version, install it like any other app, then try again.
+**If an `npx` command says `command not found`:** you'll also need [Node.js](https://nodejs.org) installed — it's what runs `npx`. Download the "LTS" version, install it like any other app, then try again. (If a *different* command says this — one that doesn't start with `npx` — that specific tool isn't installed; Node.js won't fix it.)
 
 ## Claude Code (recommended: the full plugin)
 
@@ -51,15 +51,17 @@ You now have all three layers:
 2. `npx shipclear setup`
 3. Before launch: `npx shipclear ship`.
 
-## No AI at all
+## Use the standalone CLI (works with any AI tool, or none)
 
-ShipClear is a complete standalone CLI:
+This is the path for **Bolt.new, Lovable, Replit, v0**, or anyone without a terminal-integrated AI coding tool — including if you're not using AI at all. ShipClear is a complete standalone CLI:
 
 ```bash
 npx shipclear setup   # .env/.env.example/.gitignore + commit guard
 npx shipclear scan    # quick secrets check any time
 npx shipclear ship    # the full gate → SHIP-REPORT.md + verdict
 ```
+
+The full report (`SHIP-REPORT.md`) ends with a checklist meant for an AI to work through with you — if you don't have one built into your terminal, paste that checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to go through the list, or ask a developer friend.
 
 ## Reading the verdict
 
