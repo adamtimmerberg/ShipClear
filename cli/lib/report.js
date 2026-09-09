@@ -86,6 +86,11 @@ const EXPLAIN = {
     why: 'Something named like a key, token, or password is assigned directly in the code. If it\'s real, it leaks with the repo.',
     fix: 'If it\'s a real credential: move it to .env and rotate it (log in to whichever service issued it and generate a new one). If it\'s a harmless placeholder, make it look like one (empty, or "REPLACE_ME") so scanners stay calm — or add the file to .shipclearignore.',
   },
+  'tls-verification-off': {
+    title: 'Certificate checking is switched off',
+    why: 'This line tells your app to trust any server, even a fake one — so anyone on the same network (a café, a hotel) can sit between your app and the real service and read or change what passes through, including your API keys.',
+    fix: 'Delete this line. It was almost certainly added to make a certificate error go away; the real fix is to solve that error (usually a wrong URL, a missing certificate on your own server, or a corporate proxy). If it was only for local testing, keep it out of the code that ships.',
+  },
   'personal-path': {
     title: 'Your local file path (with your username) is in the code',
     why: 'Purely a privacy footprint: it reveals your computer\'s username and folder layout. Harmless to the app, but not something to publish.',

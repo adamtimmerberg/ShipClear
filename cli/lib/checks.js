@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import {
   findSecrets, looksPlaceholder, entropy, maskSecret, lineOfIndex,
   realLookingEmails, SSN, PASSWORD_ASSIGNMENT, SUSPICIOUS_ACCOUNT_EMAIL,
-  personalPaths,
+  personalPaths, TLS_VERIFICATION_OFF,
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
@@ -17,7 +17,8 @@ const ENV_FILE = /^\.env(?:\..+)?$/;
 const ENV_TEMPLATE = /^\.env(?:\..+)?\.(?:example|sample|template)$|^\.env\.(?:example|sample|template)$/;
 const KEY_FILE = /(\.pem|\.p12|\.pfx|\.ppk)$|(^|\/)id_(?:rsa|ed25519|ecdsa|dsa)(\.pub)?$/;
 const DATA_FILE_EXT = new Set(['.csv', '.tsv', '.sql', '.jsonl', '.ndjson']);
-const DOC_EXT = new Set(['.md', '.mdx', '.rst', '.txt']);
+// .mdc: Cursor rules files — prose instructions, not code.
+const DOC_EXT = new Set(['.md', '.mdx', '.mdc', '.rst', '.txt']);
 // .claude/skills, commands, agents, and settings.json are intentionally
 // shareable project config — only the local/private pieces are artifacts.
 const AGENT_ARTIFACTS = ['.claude/settings.local.json', '.codex/', '.aider', '.specstory/'];
@@ -83,6 +84,18 @@ export function runGate(root, { quick = false } = {}) {
           });
         }
       });
+
+      TLS_VERIFICATION_OFF.lastIndex = 0;
+      let tls;
+      while ((tls = TLS_VERIFICATION_OFF.exec(content))) {
+        findings.push({
+          id: 'tls-verification-off',
+          severity: 'medium',
+          file: rel,
+          line: lineOfIndex(content, tls.index),
+          detail: `\`${tls[0].trim()}\``,
+        });
+      }
 
       for (const hit of personalPaths(content)) {
         findings.push({

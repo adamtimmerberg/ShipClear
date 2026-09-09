@@ -17,4 +17,8 @@ app.post('/login', (req, res) => {
   res.status(401).end();
 });
 
+// "Fixed" a certificate error the way an AI assistant often does.
+const https = require('https');
+const agent = new https.Agent({ rejectUnauthorized: false });
+
 app.listen(3000);

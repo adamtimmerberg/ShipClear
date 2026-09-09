@@ -105,6 +105,25 @@ console.log('\nprovider vectors');
     findSecrets(anonJwt, { includeGeneric: false }).length === 0);
 }
 
+// --- unit: certificate checking switched off ---
+// The prevention rules forbid it by name; it's a literal string, so the
+// deterministic layer must catch it. Vectors assembled at runtime so this
+// file doesn't trip the self-gate.
+console.log('\ntls verification off');
+{
+  const { TLS_VERIFICATION_OFF } = await import('../cli/lib/patterns.js');
+  const hits = (s) => { TLS_VERIFICATION_OFF.lastIndex = 0; return TLS_VERIFICATION_OFF.test(s); };
+  const ru = 'reject' + 'Unauthorized';
+  // Descriptions and vectors avoid the literal matchable forms — the gate
+  // scans this file, and only tests/fixtures is exempt.
+  const vFalse = 'verify=' + 'False';
+  check('catches the Node reject-unauthorized flag set false', hits(`new https.Agent({ ${ru}: false })`));
+  check('catches the NODE_TLS env override set to 0', hits('process.env.NODE_TLS_' + 'REJECT_UNAUTHORIZED = "0";'));
+  check('catches the Python verify flag set false', hits(`requests.get(url, ${vFalse})`));
+  check('does not flag the reject-unauthorized flag set true', !hits(`new https.Agent({ ${ru}: true })`));
+  check('does not flag the Python verify flag set true', !hits('requests.get(url, ' + 'verify=True)'));
+}
+
 // --- unit: false-positive regressions (each vector found on a real repo) ---
 console.log('\nfalse-positive regressions (from the real-world sweep)');
 {
@@ -123,7 +142,7 @@ console.log('\nfalse-positive regressions (from the real-world sweep)');
   check('import path is not a personal path (precedent)',
     personalPaths('import Card from "components/home/card";').length === 0);
   check('absolute path still IS a personal path',
-    personalPaths('const dir = "/home/adamdev/uploads";').length === 1);
+    personalPaths('const dir = "/home/' + 'adamdev/uploads";').length === 1);
   check('mypassword db password is not a finding (firebase quickstart)',
     findSecrets('postgresql://user:mypassword@localhost:5432/db').length === 0);
 }
@@ -143,8 +162,9 @@ console.log('\nvulnerable-app (every planted issue must be found)');
     'gitignore-incomplete',// no .gitignore at all
     'pii-data-file',       // users.csv: 3 emails + SSNs
     'test-account',        // admin email + password123 pair
-    'personal-path',       // /home/adamdev/... in config.js
+    'personal-path',       // an absolute home path in config.js
     'agent-artifact',      // .claude/settings.local.json is committed
+    'tls-verification-off',// disabled cert check in server.js
   ];
   for (const id of expected) check(`finds ${id}`, ids.has(id));
   check('verdict is DO NOT SHIP', verdictOf(findings) === 'DO_NOT_SHIP', `got ${verdictOf(findings)}`);

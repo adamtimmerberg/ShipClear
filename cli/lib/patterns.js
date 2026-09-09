@@ -173,9 +173,16 @@ export const PASSWORD_ASSIGNMENT = /pass(?:word|wd)?[a-z0-9_]*["']?\s*[:=]\s*['"
 // Quoted email that smells like a built-in account.
 export const SUSPICIOUS_ACCOUNT_EMAIL = /['"][a-z0-9._%+-]*(?:admin|test|demo|root|superuser)[a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}['"]/i;
 
-// The lookbehind requires an absolute-path boundary: `"/home/adam"` matches,
-// but the `/home/` inside an import like `components/home/card` does not
-// (found the hard way on the precedent starter repo).
+// Turning off TLS certificate checking — the "fix" an AI assistant reaches
+// for when a request fails with a certificate error. Deterministic and
+// high-confidence: there is no placeholder form of the disable-verification
+// flag. (Examples live in tests/fixtures, not here — the gate scans this
+// file, and a real matchable form in a comment would flag our own repo.)
+export const TLS_VERIFICATION_OFF = /rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0['"]?|\bverify\s*=\s*False\b/g;
+
+// The leading lookbehind requires an absolute-path boundary, so a real home
+// path matches but the `/home/` inside an import like `components/home/card`
+// does not (found the hard way on the precedent starter repo).
 export const PERSONAL_PATH = /(?<![\w./-])(?:\/(?:home|Users)\/[A-Za-z0-9._-]{3,}|[A-Z]:\\Users\\[A-Za-z0-9._-]{3,})/g;
 
 const IMPERSONAL_PATH_USERS = new Set([
