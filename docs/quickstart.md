@@ -72,6 +72,10 @@ npx shipclear ship --fix-history
 
 The full report (`SHIP-REPORT.md`) ends with a checklist meant for an AI to work through with you — if you don't have one built into your terminal, paste that checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to go through the list, or ask a developer friend.
 
+## Stuck?
+
+[troubleshooting.md](troubleshooting.md) answers the questions first-timers actually hit — "command not found", "it told me to commit but I don't know how", "pip install failed", "I cleaned up but the finding is still there" — plus a plain-English glossary (terminal, commit, remote, rotate, .env…).
+
 ## Reading the verdict
 
 - ✅ **CLEARED TO SHIP** — no blocking findings.

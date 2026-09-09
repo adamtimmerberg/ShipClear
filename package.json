@@ -30,7 +30,8 @@
     "cli",
     "core",
     "adapters",
-    "docs/quickstart.md"
+    "docs/quickstart.md",
+    "docs/troubleshooting.md"
   ],
   "scripts": {
     "test": "node tests/run.js",

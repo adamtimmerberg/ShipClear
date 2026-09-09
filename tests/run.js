@@ -312,6 +312,15 @@ console.log('\nquick scan verdict is never confusable with the full gate\'s');
   // Round 4: "scan said Nice, ship said CRITICAL thirty seconds later" —
   // the quick verdict must say what it doesn't look at, not just that it's partial.
   check('quick scan CLEARED says what it skipped', /current files only, not git history/.test(quick));
+
+  // A stuck first-timer gets the troubleshooting link at the verdict when
+  // there are findings, and is NOT nagged with it on a clean pass.
+  const withFinding = renderTerminal({
+    findings: [{ id: 'gitignore-incomplete', severity: 'high', file: '.gitignore' }],
+    notes: [], verdict: 'SHIP_WITH_FIXES', version: '0.0.0',
+  });
+  check('a report with findings links to troubleshooting', /troubleshooting\.md/.test(withFinding));
+  check('a clean CLEARED report does not nag with the troubleshooting link', !/troubleshooting\.md/.test(full));
 }
 
 // --- setup tells a beginner to commit what it created ---

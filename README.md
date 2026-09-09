@@ -73,7 +73,7 @@ One canonical rule set, generated into every format ([how](scripts/build-adapter
 | **Any local model / other tool** | Paste [`adapters/generic/INSTRUCTIONS.md`](adapters/generic/INSTRUCTIONS.md) into your system prompt |
 | **No AI at all** | The CLI works standalone: `npx shipclear setup && npx shipclear ship` |
 
-Full walkthroughs: [docs/quickstart.md](docs/quickstart.md).
+Full walkthroughs: [docs/quickstart.md](docs/quickstart.md). Stuck on anything? [docs/troubleshooting.md](docs/troubleshooting.md) answers the questions first-timers actually hit, in plain English.
 
 ## What the gate checks
 

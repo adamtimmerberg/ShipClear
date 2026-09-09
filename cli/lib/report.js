@@ -231,6 +231,9 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
     lines.push('');
     lines.push('  Show it off — add the badge to your README:');
     lines.push('  ' + BADGE_MARKDOWN);
+  } else if (open.length) {
+    // A stuck first-timer needs the pointer exactly here, at the verdict.
+    lines.push('  Stuck on any of the above? Plain-English help: https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
   }
   lines.push('');
   lines.push(quick ? '  This was a quick check only. For the full gate: shipclear ship' : '  Full report written to SHIP-REPORT.md');
