@@ -9,7 +9,7 @@ import {
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
-import { isGitRepo, hasCommits, hasRemote, trackedFiles, historyAddedLines } from './git.js';
+import { isGitRepo, hasCommits, hasRemote, branchNames, trackedFiles, historyAddedLines } from './git.js';
 
 const ENV_FILE = /^\.env(?:\..+)?$/;
 // Covers .env.example but also .env.local.example, .env.production.sample,
@@ -184,6 +184,7 @@ export function runGate(root, { quick = false } = {}) {
   // --- secrets anywhere in git history, even if since deleted ---
   if (inGit && hasCommits(root)) {
     const remoteExists = hasRemote(root);
+    const currentBranch = branchNames(root)[0] || 'main';
     const seen = new Set();
     // One finding per file+commit, not per secret: two keys leaked in the
     // same .env in the same commit are one problem with one fix, and two
@@ -212,6 +213,7 @@ export function runGate(root, { quick = false } = {}) {
           file,
           commit,
           hasRemote: remoteExists,
+          branch: currentBranch,
           names: [label],
           detail: `${label} first added in commit ${commit}.`,
         };

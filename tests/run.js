@@ -230,6 +230,10 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   const hasRemoteEnv = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: '.env', commit: 'abc1234' });
   check('has-remote, .env: removes the whole file with --invert-paths',
     /--path \.env --invert-paths/.test(hasRemoteEnv) && !/--replace-text/.test(hasRemoteEnv));
+  // `git push --force origin main` fails outright for a user on master.
+  const hasRemoteMaster = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: 'bot.js', commit: 'abc1234', branch: 'master' });
+  check('has-remote: force-push uses the user\'s actual branch name',
+    /git push --force origin master/.test(hasRemoteMaster) && !/origin main/.test(hasRemoteMaster));
   check('has-remote: the AI hand-off sentence matches the file type',
     /scrub that value.*keep the file/.test(hasRemoteWithFile) && /remove that file from every commit/.test(hasRemoteEnv));
   check('has-remote case covers re-adding the remote and the force-push',
