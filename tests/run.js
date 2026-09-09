@@ -234,6 +234,15 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   const hasRemoteMaster = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: 'bot.js', commit: 'abc1234', branch: 'master' });
   check('has-remote: force-push uses the user\'s actual branch name',
     /git push --force origin master/.test(hasRemoteMaster) && !/origin main/.test(hasRemoteMaster));
+  // Round 4: after cleaning the remote with a mirror-based tool (BFG), the
+  // user's own folder still had the old history and `ship` re-reported the
+  // same CRITICAL; the only git word she knew (pull) produced three fatals.
+  check('has-remote: says how to check filter-repo is installed', /git filter-repo --version/.test(hasRemoteMaster));
+  check('has-remote: after a BFG cleanup, tells the user to reset their own folder to the cleaned remote',
+    /git fetch && git reset --hard origin\/master/.test(hasRemoteMaster));
+  check('has-remote: says to re-run ship to confirm', /Then run `shipclear ship` again/.test(hasRemoteMaster));
+  check('has-remote: warns what a BFG failure looks like', /Caused by:/.test(hasRemoteMaster));
+  check('has-remote: notes GitHub may keep the old commit reachable for a while', /reachable by its ID/.test(hasRemoteMaster));
   check('has-remote: the AI hand-off sentence matches the file type',
     /scrub that value.*keep the file/.test(hasRemoteWithFile) && /remove that file from every commit/.test(hasRemoteEnv));
   check('has-remote case covers re-adding the remote and the force-push',
@@ -259,6 +268,28 @@ console.log('\nquick scan verdict is never confusable with the full gate\'s');
   check('quick scan verdict text differs from the full gate\'s', full !== quick);
   check('quick scan never offers the ship-worthy badge', !quick.includes('add the badge'));
   check('full gate on a real CLEARED verdict does offer the badge', full.includes('add the badge'));
+  // Round 4: "scan said Nice, ship said CRITICAL thirty seconds later" —
+  // the quick verdict must say what it doesn't look at, not just that it's partial.
+  check('quick scan CLEARED says what it skipped', /current files only, not git history/.test(quick));
+}
+
+// --- setup tells a beginner to commit what it created ---
+// (Round 4: .gitignore and .env.example sat uncommitted the whole session;
+// "commit" is not an instruction to someone who has never run git.)
+console.log('\nsetup');
+{
+  const bin = path.join(here, '../cli/bin/shipclear.js');
+  const dir = makeRepo('clean-app');
+  // clean-app ships a .gitignore that already covers .env; drop it so the
+  // gitignore step actually runs and its wording is exercised.
+  fs.rmSync(path.join(dir, '.gitignore'));
+  const r = spawnSync('node', [bin, 'setup'], { cwd: dir, encoding: 'utf8' });
+  check('setup exits 0 in a git repo', r.status === 0, r.stderr);
+  check('setup gives the literal commit command for the files it created',
+    /git add -A && git commit -m/.test(r.stdout));
+  check('setup explains gitignore protects future commits, and that ship finds earlier ones',
+    /protects future commits/.test(r.stdout) && /`shipclear ship` will find it/.test(r.stdout));
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('\nclean-app (no false alarms)');

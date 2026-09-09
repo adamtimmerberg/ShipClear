@@ -38,7 +38,7 @@ function cmdSetup(root) {
   const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
   if (!gitignore.split('\n').some((l) => /^(\.env(\.\*)?|\*\.env|\.env\*)\s*$/.test(l.trim()))) {
     fs.writeFileSync(gitignorePath, gitignore + GITIGNORE_BLOCK);
-    done.push('.gitignore now excludes .env files (and the ShipClear report) — from now on; anything committed before this is a separate finding');
+    done.push('.gitignore now excludes .env files and the ShipClear report — this protects future commits; if a secret was already committed earlier, `shipclear ship` will find it');
   }
   const envPath = path.join(root, '.env');
   if (!fs.existsSync(envPath)) {
@@ -47,10 +47,14 @@ function cmdSetup(root) {
   }
   if (!fs.existsSync(path.join(root, '.env.example'))) {
     // Same derivation the auto-fix uses: variable names from .env, values stripped.
-    fs.writeFileSync(path.join(root, '.env.example'), envExampleFrom(envPath));
-    done.push('created .env.example (your variable names, no values — safe to share)');
+    const example = envExampleFrom(envPath);
+    fs.writeFileSync(path.join(root, '.env.example'), example);
+    done.push(example.includes('=')
+      ? 'created .env.example (your variable names, no values — safe to share)'
+      : 'created .env.example (a safe-to-share template — add a line per setting as you add them to .env)');
   }
-  if (isGitRepo(root)) {
+  const inGit = isGitRepo(root);
+  if (inGit) {
     if (installHook(root)) {
       done.push('installed the commit guard (secrets can no longer be committed)');
     } else {
@@ -64,6 +68,9 @@ function cmdSetup(root) {
   for (const d of done) console.log(`   ✔ ${d}`);
   if (!done.length && !warnings.length) console.log('   ✔ everything was already in place');
   for (const w of warnings) console.log(`   ⚠ ${w}`);
+  // The files above sit uncommitted otherwise, and "commit" is not an
+  // instruction to someone who has never run git — give the command.
+  if (inGit && done.length) console.log('\n  These changes aren\'t saved into git yet — run: git add -A && git commit -m "add ShipClear protection"');
   console.log('\n  Before you launch or go public: shipclear ship\n');
 }
 

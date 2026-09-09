@@ -261,7 +261,7 @@ export function runGate(root, { quick = false } = {}) {
       notes.push('Could not run `npm audit` (offline or npm unavailable) — dependency check skipped.');
     }
   } else if (fs.existsSync(path.join(root, 'package.json'))) {
-    notes.push('No package-lock.json, so the dependency vulnerability check was skipped. Nothing to do unless your app uses npm packages — if it does, run `npm install` once to create that file.');
+    notes.push('No package-lock.json, so the dependency vulnerability check was skipped. If your package.json has a "dependencies" section, run `npm install` once to create that file; otherwise there is nothing to do.');
   }
 
   return { findings, notes, inGit };
