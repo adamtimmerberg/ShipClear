@@ -114,6 +114,15 @@ export function runGate(root, { quick = false } = {}) {
         findings.push({ id: 'env-tracked', severity: 'critical', file: rel });
       } else if (isKeyFile(rel)) {
         findings.push({ id: 'key-file-tracked', severity: 'critical', file: rel });
+      } else if (rel.startsWith('.shipclear/')) {
+        // The prevention rules tell the AI to keep generated test credentials
+        // here, git-ignored. If it's tracked, that ignore never happened.
+        findings.push({
+          id: 'test-account',
+          severity: 'high',
+          file: rel,
+          detail: 'This is where ShipClear\'s rules tell your AI to keep test logins — it must never be committed.',
+        });
       } else {
         const artifact = AGENT_ARTIFACTS.find((p) => rel.startsWith(p));
         if (artifact) findings.push({ id: 'agent-artifact', severity: 'low', file: rel });

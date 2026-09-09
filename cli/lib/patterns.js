@@ -165,8 +165,10 @@ export function realLookingEmails(content) {
 // --- misc shared patterns ---
 
 // Password-ish identifier assigned a short string literal. Deliberately no
-// leading \b: it must also hit inside names like TEST_PASSWORD.
-export const PASSWORD_ASSIGNMENT = /pass(?:word|wd)?[a-z0-9_]*\s*[:=]\s*['"][^'"\n]{4,}['"]/i;
+// leading \b: it must also hit inside names like TEST_PASSWORD. The optional
+// quote before the separator covers JSON and quoted-key object literals
+// (`"password": "…"`), the shape an AI writes into a seed or fixture file.
+export const PASSWORD_ASSIGNMENT = /pass(?:word|wd)?[a-z0-9_]*["']?\s*[:=]\s*['"][^'"\n]{4,}['"]/i;
 
 // Quoted email that smells like a built-in account.
 export const SUSPICIOUS_ACCOUNT_EMAIL = /['"][a-z0-9._%+-]*(?:admin|test|demo|root|superuser)[a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}['"]/i;

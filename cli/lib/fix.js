@@ -12,6 +12,7 @@ export const GITIGNORE_BLOCK = `
 .env.*
 !.env.example
 SHIP-REPORT.md
+.shipclear/
 `;
 
 // The git pre-commit guard. Fails closed when the scan ran and found

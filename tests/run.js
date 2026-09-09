@@ -499,6 +499,39 @@ console.log('\ngit commit guard');
   }
 }
 
+// --- the test-account registry the prevention rules point at ---
+// core/prevention.md tells the AI to keep generated test logins in
+// .shipclear/test-accounts.json "git-ignored" — so the gitignore block has
+// to actually ignore it, a tracked copy has to be a finding, and the
+// JSON shape it'd be written in has to match the hardcoded-login check.
+console.log('\ntest-account registry');
+{
+  const { GITIGNORE_BLOCK } = await import('../cli/lib/fix.js');
+  const { PASSWORD_ASSIGNMENT, SUSPICIOUS_ACCOUNT_EMAIL } = await import('../cli/lib/patterns.js');
+  check('gitignore block ignores .shipclear/', /^\.shipclear\/$/m.test(GITIGNORE_BLOCK));
+  // Assembled at runtime so this file never contains a login-shaped pair
+  // itself (the self-gate scans tests/run.js — only fixtures/ is ignored).
+  const adminEmail = 'admin@' + 'app.test';
+  const pw = 'pass' + 'word';
+  const jsonPair = `{ "email": "${adminEmail}", "${pw}": "letmein1" }`;
+  const objPair = `{ email: '${adminEmail}', ${pw}: 'letmein1' }`;
+  check('JSON-shaped "password": "…" matches the hardcoded-login check', PASSWORD_ASSIGNMENT.test(jsonPair));
+  check('unquoted password: "…" still matches', PASSWORD_ASSIGNMENT.test(objPair));
+  check('quoted admin email still matches', SUSPICIOUS_ACCOUNT_EMAIL.test(`"email": "${adminEmail}"`));
+
+  const dir = makeRepo('clean-app');
+  const gitIn = (...args) =>
+    execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
+      '-c', 'commit.gpgsign=false', ...args], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  fs.mkdirSync(path.join(dir, '.shipclear'));
+  fs.writeFileSync(path.join(dir, '.shipclear', 'test-accounts.json'), `[${jsonPair}]\n`);
+  gitIn('add', '-f', '.shipclear/test-accounts.json'); gitIn('commit', '-q', '-m', 'oops');
+  const { findings } = runGate(dir);
+  check('a tracked .shipclear/test-accounts.json is a test-account finding',
+    findings.some((f) => f.id === 'test-account' && f.file === '.shipclear/test-accounts.json'));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 // --- the AI adapters must not run the destructive fix unasked ---
 // The Claude Code /safe-to-ship command tells an agent to run ship and act
 // on the report. Nothing else would stop it from running --fix-history for
