@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { applyFixes } from '../cli/lib/fix.js';
@@ -200,6 +200,17 @@ console.log('\ncli');
 {
   const out = execFileSync('node', [path.join(here, '../cli/bin/shipclear.js'), '--version'], { encoding: 'utf8' });
   check('--version prints a version', /^\d+\.\d+\.\d+$/.test(out.trim()), out.trim());
+
+  // --help / -h / help are the first thing anyone confused tries — they
+  // must succeed cleanly, not print help text and THEN report themselves
+  // as an unknown command (a real regression this project shipped once).
+  const bin = path.join(here, '../cli/bin/shipclear.js');
+  for (const flag of ['--help', '-h', 'help']) {
+    const r = spawnSync('node', [bin, flag], { encoding: 'utf8' });
+    check(`\`shipclear ${flag}\` exits 0`, r.status === 0, `exit ${r.status}`);
+    check(`\`shipclear ${flag}\` doesn't call itself unknown`,
+      !r.stdout.includes('Unknown command') && !(r.stderr || '').includes('Unknown command'));
+  }
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);

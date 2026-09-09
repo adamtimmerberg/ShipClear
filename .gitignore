@@ -9,6 +9,7 @@ node_modules/
 # Generated output
 SHIP-REPORT.md
 *.log
+*.tgz
 
 # OS / editor noise
 .DS_Store

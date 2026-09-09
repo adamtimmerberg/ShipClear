@@ -152,7 +152,7 @@ switch (cmd) {
     break;
   default:
     console.log(HELP);
-    if (cmd && cmd !== 'help') {
+    if (cmd && cmd !== 'help' && cmd !== '--help' && cmd !== '-h') {
       console.error(`Unknown command: ${cmd}`);
       exitCode = 1;
     }
