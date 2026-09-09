@@ -193,7 +193,7 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   check('no-remote case never mentions force-push (not needed — nothing was ever pushed)',
     !/force-push/i.test(noRemoteFix));
   check('has-remote case names a real tool with a real example command',
-    /git filter-repo --path/.test(hasRemoteFix));
+    /git filter-repo --(replace-text|path)/.test(hasRemoteFix));
   check('has-remote case warns about force-push',
     /force-push/i.test(hasRemoteFix));
   check('both cases lead with rotation as the action that actually protects you',
@@ -209,6 +209,33 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
     /Please tell me who you are|user\.email/.test(noRemoteFix));
   check('both cases point at how to actually see what leaked',
     /git show/.test(noRemoteFix) && /git show/.test(hasRemoteFix));
+
+  // git-filter-repo is not part of git; a real user has to install it. The
+  // has-remote text must say how, give the full command sequence including
+  // re-adding the remote (filter-repo strips it) and the force-push, and
+  // offer the "ask your AI" hand-off — and it must say the user is already
+  // safe once the key is rotated, so a hard cleanup step never reads as
+  // "you are still exposed."
+  const hasRemoteWithFile = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: 'bot.js', commit: 'abc1234' });
+  check('has-remote case says how to install filter-repo', /pip install git-filter-repo/.test(hasRemoteWithFile));
+  // A secret INSIDE a code file: scrub the value, keep the file. Telling
+  // the user to --invert-paths their main source file would delete it.
+  check('has-remote, code file: scrubs the value with --replace-text',
+    /--replace-text/.test(hasRemoteWithFile) && !/--path bot\.js --invert-paths/.test(hasRemoteWithFile));
+  check('has-remote, code file: never prints the secret, tells the user where to copy it from',
+    /copy it from the `git show`/.test(hasRemoteWithFile));
+  check('has-remote, code file: says to delete the expressions file afterward',
+    /delete `secrets-to-remove\.txt`/.test(hasRemoteWithFile));
+  // A whole-secrets file (.env, .pem): removing the file from history IS right.
+  const hasRemoteEnv = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: '.env', commit: 'abc1234' });
+  check('has-remote, .env: removes the whole file with --invert-paths',
+    /--path \.env --invert-paths/.test(hasRemoteEnv) && !/--replace-text/.test(hasRemoteEnv));
+  check('has-remote: the AI hand-off sentence matches the file type',
+    /scrub that value.*keep the file/.test(hasRemoteWithFile) && /remove that file from every commit/.test(hasRemoteEnv));
+  check('has-remote case covers re-adding the remote and the force-push',
+    /git remote add origin/.test(hasRemoteWithFile) && /git push --force/.test(hasRemoteWithFile));
+  check('has-remote case offers a paste-able ask for the AI assistant', /paste it this sentence/.test(hasRemoteWithFile));
+  check('has-remote case says rotation alone already makes you safe', /already safe/.test(hasRemoteWithFile));
 }
 
 // --- integration: clean fixture ---
