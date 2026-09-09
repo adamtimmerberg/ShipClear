@@ -134,27 +134,37 @@ const cmd = args[0];
 const root = process.cwd();
 
 let exitCode = 0;
-switch (cmd) {
-  case 'setup':
-    cmdSetup(root);
-    break;
-  case 'scan':
-    exitCode = args.includes('--staged')
-      ? cmdScanStaged(root, args.includes('--quiet'))
-      : cmdScan(root);
-    break;
-  case 'ship':
-    exitCode = cmdShip(root, { fix: !args.includes('--no-fix') });
-    break;
-  case '--version':
-  case '-v':
-    console.log(pkg.version);
-    break;
-  default:
-    console.log(HELP);
-    if (cmd && cmd !== 'help' && cmd !== '--help' && cmd !== '-h') {
-      console.error(`Unknown command: ${cmd}`);
-      exitCode = 1;
-    }
+try {
+  switch (cmd) {
+    case 'setup':
+      cmdSetup(root);
+      break;
+    case 'scan':
+      exitCode = args.includes('--staged')
+        ? cmdScanStaged(root, args.includes('--quiet'))
+        : cmdScan(root);
+      break;
+    case 'ship':
+      exitCode = cmdShip(root, { fix: !args.includes('--no-fix') });
+      break;
+    case '--version':
+    case '-v':
+      console.log(pkg.version);
+      break;
+    default:
+      console.log(HELP);
+      if (cmd && cmd !== 'help' && cmd !== '--help' && cmd !== '-h') {
+        console.error(`Unknown command: ${cmd}`);
+        exitCode = 1;
+      }
+  }
+} catch (err) {
+  // A raw stack trace here is exactly the wrong first impression for a
+  // tool whose whole promise is "no security background needed" — this is
+  // the difference between an unreadable crash (permission errors on
+  // sandboxed/cloud IDEs are common) and a plain-English explanation.
+  console.error(`\n  ShipClear hit an unexpected problem: ${err.message}`);
+  console.error('  If this keeps happening, please report it: https://github.com/adamtimmerberg/ShipClear/issues\n');
+  exitCode = 1;
 }
 process.exit(exitCode);

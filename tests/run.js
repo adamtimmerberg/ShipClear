@@ -228,6 +228,22 @@ console.log('\ncli');
     check(`\`shipclear ${flag}\` doesn't call itself unknown`,
       !r.stdout.includes('Unknown command') && !(r.stderr || '').includes('Unknown command'));
   }
+
+  // A filesystem error mid-command must produce a plain-English message,
+  // never a raw Node stack trace — a real crash this project shipped once
+  // (found by testing a read-only directory; reproduced here portably
+  // across OSes with a `.gitignore` that's a directory instead of a file,
+  // since chmod-based permission tricks aren't reliable on Windows CI).
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-crash-test-'));
+    fs.mkdirSync(path.join(dir, '.gitignore'));
+    const r = spawnSync('node', [bin, 'setup'], { cwd: dir, encoding: 'utf8' });
+    check('a filesystem error during setup exits non-zero', r.status !== 0);
+    check('a filesystem error shows a plain message, not a stack trace',
+      /ShipClear hit an unexpected problem/.test(r.stderr) && !/at Object\.|at cmdSetup|node:fs:/.test(r.stderr),
+      r.stderr.slice(0, 200));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
