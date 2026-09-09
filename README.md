@@ -57,7 +57,7 @@ Most tools scan your app *after* you've made the mistake. ShipClear rides along 
 | Layer | What it does |
 |---|---|
 | 🧠 **Prevention** | Rules for your AI assistant so secrets never get hardcoded in the first place — `.env` from the first line of code, no test accounts, no real data in the repo. |
-| 🚫 **Enforcement** | A git commit guard (`shipclear setup`) that physically blocks any commit containing secrets or a `.env` file. Deterministic — it can't be forgotten or talked out of it. |
+| 🚫 **Enforcement** | A git commit guard (`shipclear setup`) that blocks any commit containing secrets or a `.env` file. Deterministic — it isn't the AI deciding to be careful. (If the scanner itself can't run — you're offline, say — it lets the commit through with a warning rather than blocking your work; it fails safe, not stuck.) |
 | ✅ **The gate** | `shipclear ship`: 13 deterministic checks + a semantic checklist for your AI, ending in one verdict — cleared to ship, or not. Found a secret in old commits? `shipclear ship --fix-history` erases that history safely (never-pushed repos only; it refuses if it would lose anything). |
 
 ## Works with every AI coding tool

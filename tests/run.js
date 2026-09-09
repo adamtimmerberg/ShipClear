@@ -237,7 +237,7 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   // safe once the key is rotated, so a hard cleanup step never reads as
   // "you are still exposed."
   const hasRemoteWithFile = EXPLAIN['secret-in-history'].fix({ hasRemote: true, file: 'bot.js', commit: 'abc1234' });
-  check('has-remote case says how to install filter-repo', /pip install git-filter-repo/.test(hasRemoteWithFile));
+  check('has-remote case says how to install filter-repo', /(pipx|pip) install .*git-filter-repo/.test(hasRemoteWithFile));
   // A secret INSIDE a code file: scrub the value, keep the file. Telling
   // the user to --invert-paths their main source file would delete it.
   check('has-remote, code file: scrubs the value with --replace-text',
@@ -258,6 +258,7 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   // user's own folder still had the old history and `ship` re-reported the
   // same CRITICAL; the only git word she knew (pull) produced three fatals.
   check('has-remote: says how to check filter-repo is installed', /git filter-repo --version/.test(hasRemoteMaster));
+  check('has-remote: gives a pip fallback for externally-managed-environment', /pipx install|externally-managed/.test(hasRemoteMaster));
   check('has-remote: after a BFG cleanup, tells the user to reset their own folder to the cleaned remote',
     /git fetch && git reset --hard origin\/master/.test(hasRemoteMaster));
   check('has-remote: says to re-run ship to confirm', /Then run `shipclear ship` again/.test(hasRemoteMaster));
