@@ -261,14 +261,14 @@ console.log('\nsecret-in-history guidance (varies by repo state)');
   check('has-remote: gives a pip fallback for externally-managed-environment', /pipx install|externally-managed/.test(hasRemoteMaster));
   check('has-remote: after a BFG cleanup, tells the user to reset their own folder to the cleaned remote',
     /git fetch && git reset --hard origin\/master/.test(hasRemoteMaster));
-  check('has-remote: says to re-run ship to confirm', /Then run `shipclear ship` again/.test(hasRemoteMaster));
+  check('has-remote: says to re-run ship to confirm', /`shipclear ship` again to confirm/.test(hasRemoteMaster));
   check('has-remote: warns what a BFG failure looks like', /Caused by:/.test(hasRemoteMaster));
   check('has-remote: notes GitHub may keep the old commit reachable for a while', /reachable by its ID/.test(hasRemoteMaster));
   check('has-remote: the AI hand-off sentence matches the file type',
     /scrub that value.*keep the file/.test(hasRemoteWithFile) && /remove that file from every commit/.test(hasRemoteEnv));
   check('has-remote case covers re-adding the remote and the force-push',
     /git remote add origin/.test(hasRemoteWithFile) && /git push --force/.test(hasRemoteWithFile));
-  check('has-remote case offers a paste-able ask for the AI assistant', /paste it this sentence/.test(hasRemoteWithFile));
+  check('has-remote case offers a paste-able ask for the AI assistant', /Paste it: /.test(hasRemoteWithFile));
   check('has-remote case says rotation alone already makes you safe', /already safe/.test(hasRemoteWithFile));
 }
 

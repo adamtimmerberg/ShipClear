@@ -41,9 +41,30 @@ const EXPLAIN = {
           ? `run \`git filter-repo --path ${file} --invert-paths --force\` (removes that file from every commit — it's git-ignored now, so it won't come back)`
           : `make a plain text file called \`secrets-to-remove.txt\` containing just the leaked value on one line (copy it from the \`git show\` command below), run \`git filter-repo --replace-text secrets-to-remove.txt --force\` (replaces that value with \`***REMOVED***\` in every commit; the file itself stays), then delete \`secrets-to-remove.txt\``;
         const branch = f.branch || 'main';
-        return `${rotate} Once the key is rotated, the copy in history is useless to anyone — so if the next part gets hard, you are already safe; it's cleanup. (GitHub can keep an old commit reachable by its ID for a while even after it's been removed — exactly why rotating is the step that matters.) Step 2 (cleanup): since this repo has already been pushed somewhere, erasing local history isn't enough — the old commit is on the remote too. The straightforward route is to ask the AI assistant you built this with; paste it this sentence: ${askAi} If you'd rather do it yourself: install [git filter-repo](https://github.com/newren/git-filter-repo) (it isn't part of git — try \`pipx install git-filter-repo\`, or \`pip install --user git-filter-repo\`, or \`brew install git-filter-repo\` on a Mac; if pip says "externally-managed-environment", use pipx, or just switch to the ask-your-AI route above — it doesn't need any of this). Confirm it worked with \`git filter-repo --version\`, which prints a short version like \`2.47.0\` or a code of letters and digits — either means it's installed. Then ${scrub}, re-add your remote (filter-repo removes it as a safety measure: \`git remote add origin <your repo url>\`), and \`git push --force origin ${branch}\`. A force-push overwrites the copy on GitHub — fine for a repo only you work on; if anyone else has cloned it, tell them first. Then run \`shipclear ship\` again to confirm. ([BFG Repo-Cleaner](https://rtyley.github.io/bfg-repo-cleaner/) is an alternative: it needs Java, it works on a separate "mirror" copy of the repo, and if it prints a wall of text the useful line starts with \`Caused by:\`. Because it cleans the copy on GitHub but not your own folder, finish with \`git fetch && git reset --hard origin/${branch}\` inside your project, then \`shipclear ship\` again.) ${seeIt}`;
+        // Multi-line: rendered as numbered steps (see the renderers). The
+        // single-paragraph version of this was the #1 readability complaint
+        // from two independent tests.
+        return [
+          rotate,
+          "Once the key is rotated, the copy in history is useless to anyone — so if the next part gets hard, you are already safe; it's cleanup. (GitHub can keep an old commit reachable by its ID for a while, which is exactly why rotating is the step that matters.)",
+          `Step 2 (cleanup): the old commit is also on the remote (your copy on GitHub), so erasing local history isn't enough. Two routes — pick one:`,
+          `A) Easiest: ask the AI assistant you built this with. Paste it: ${askAi}`,
+          `B) Do it yourself: install git filter-repo (it isn't part of git — try \`pipx install git-filter-repo\`, or \`pip install --user git-filter-repo\`, or \`brew install git-filter-repo\` on a Mac; if pip says "externally-managed-environment", use pipx, or just use route A — it needs none of this). Confirm with \`git filter-repo --version\` (any version number or short code means it's installed).`,
+          `   Then: ${scrub}.`,
+          `   Then re-add your remote (filter-repo removes it as a safety measure): \`git remote add origin <your repo url>\`, and \`git push --force origin ${branch}\` (this overwrites the copy on GitHub — fine for a repo only you work on; if anyone else cloned it, tell them first).`,
+          `   Finally: \`shipclear ship\` again to confirm.`,
+          `(BFG Repo-Cleaner is an alternative — needs Java, works on a separate "mirror" copy; if it prints a wall of text, the useful line starts with "Caused by:". It cleans GitHub but not your own folder, so finish with \`git fetch && git reset --hard origin/${branch}\` in your project, then \`shipclear ship\` again.)`,
+          seeIt,
+        ].join('\n');
       }
-      return `${rotate} Step 2 (cleanup, and the easy one): since this repo has never been pushed anywhere yet (no remote is configured), the fix is to erase git's memory and start fresh — this keeps every file exactly as it is, it only forgets old commits. Do this LAST, after every other finding above is fixed — a fresh start saves your project exactly as it is right now, problems included. Easiest and safest: run \`shipclear ship --fix-history\` and ShipClear does it for you, in this folder, after checking it won't lose any other saved work. To do it by hand instead: \`rm -rf .git && git init && git add -A && git commit -m "start"\` (Mac/Linux; on Windows delete the \`.git\` folder first, then run the rest) — if git then says "Please tell me who you are," run the two \`git config\` lines it shows you and repeat the commit. ${seeIt}`;
+      return [
+        rotate,
+        "Step 2 (cleanup, and the easy one): this repo has never been pushed anywhere (no remote), so the fix is to erase git's memory and start fresh — every file stays exactly as it is, only old commits are forgotten.",
+        'Do this LAST, after every other finding above is fixed — a fresh start saves your project exactly as it is right now, problems included.',
+        'Easiest and safest: run `shipclear ship --fix-history` and ShipClear does it for you, in this folder, after checking it won\'t lose any other saved work.',
+        'To do it by hand instead: `rm -rf .git && git init && git add -A && git commit -m "start"` (Mac/Linux; on Windows delete the `.git` folder first, then run the rest) — if git says "Please tell me who you are," run the two `git config` lines it shows you and repeat the commit.',
+        seeIt,
+      ].join('\n');
     },
   },
   'env-tracked': {
@@ -181,7 +202,12 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
     if (location(f)) lines.push(`      where: ${location(f)}${f.detail ? ` — ${f.detail}` : ''}`);
     else if (f.detail) lines.push(`      ${f.detail}`);
     lines.push(`      why it matters: ${ex.why}`);
-    lines.push(`      what to do: ${fixTextFor(ex, f)}`);
+    // Fix text may be multi-line (numbered steps for the involved fixes);
+    // keep the "what to do:" label on the first line and indent the rest so
+    // steps read as a list, not a wall of prose.
+    const fixLines = fixTextFor(ex, f).split('\n');
+    lines.push(`      what to do: ${fixLines[0]}`);
+    for (const extra of fixLines.slice(1)) lines.push(`                  ${extra}`);
     lines.push('');
   }
   if (open.length === 0) lines.push('  No findings. Nice.');
@@ -235,7 +261,15 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
       if (location(f)) out.push(`- **Where:** \`${location(f)}\`${f.detail ? ` — ${f.detail}` : ''}`);
       else if (f.detail) out.push(`- **Detail:** ${f.detail}`);
       out.push(`- **Why it matters:** ${ex.why}`);
-      out.push(`- **What to do:** ${fixTextFor(ex, f)}`);
+      // Multi-line fix text becomes a nested list so numbered steps render
+      // as steps in the markdown report, not one run-on bullet.
+      const fixLines = fixTextFor(ex, f).split('\n');
+      if (fixLines.length === 1) {
+        out.push(`- **What to do:** ${fixLines[0]}`);
+      } else {
+        out.push('- **What to do:**');
+        for (const step of fixLines) out.push(`  - ${step}`);
+      }
     }
   }
   if (fixes.length) {
