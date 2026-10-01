@@ -1,6 +1,6 @@
 {
   "name": "shipclear",
-  "version": "0.2.1",
+  "version": "1.0.0",
   "description": "The last command before you launch. A free, local, cross-agent security gate for AI-built apps: prevents leaked secrets while you build, blocks them at commit time, and gives you a plain-English safe-to-ship verdict.",
   "keywords": [
     "security",
