@@ -173,10 +173,21 @@ export function realLookingEmails(content) {
 // No leading \b, so it also fires inside names like TEST_PASSWORD; the
 // two-signal test-account rule (a suspicious account email nearby) keeps the
 // broader match from producing false findings on its own.
-export const PASSWORD_ASSIGNMENT = /(?:pass(?:word|wd)?|pword|pwd)[a-z0-9_]*["']?\s*[:=]\s*['"][^'"\n]{4,}['"]/i;
+// The optional env-fallback group covers `ADMIN_PASSWORD = process.env.X ||
+// "literal"` / `?? "literal"` — found missed on a real AI-generated app: an
+// otherwise reasonable-looking "overridable via env" default that still
+// ships a real hardcoded password when no env var is set.
+export const PASSWORD_ASSIGNMENT = /(?:pass(?:word|wd)?|pword|pwd)[a-z0-9_]*["']?\s*[:=]\s*(?:process\.env\.[A-Z0-9_]+\s*(?:\|\||\?\?)\s*)?['"][^'"\n]{4,}['"]/i;
 
-// Quoted email that smells like a built-in account.
-export const SUSPICIOUS_ACCOUNT_EMAIL = /['"][a-z0-9._%+-]*(?:admin|test|demo|root|superuser)[a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}['"]/i;
+// Quoted email that smells like a built-in account, OR a bare privileged
+// username/role literal (admin, root, superuser, test, demo) assigned,
+// directly or via the same env-fallback idiom, to an identifier that reads
+// as an account holder (user/username/login/account/email). The bare-
+// username branch exists because `ADMIN_USER = process.env.ADMIN_USER ||
+// "admin"` — no email in sight — is at least as common in real AI-written
+// "quick gate for now" code as an admin@... literal, and the original
+// email-only form missed it entirely on a real generated app.
+export const SUSPICIOUS_ACCOUNT_EMAIL = /['"][a-z0-9._%+-]*(?:admin|test|demo|root|superuser)[a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}['"]|(?:user|username|login|account|email)[a-z0-9_]*["']?\s*[:=]\s*(?:process\.env\.[A-Z0-9_]+\s*(?:\|\||\?\?)\s*)?['"](?:admin|test|demo|root|superuser)['"]/i;
 
 // Turning off TLS certificate checking — the "fix" an AI assistant reaches
 // for when a request fails with a certificate error. Deterministic and

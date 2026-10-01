@@ -80,7 +80,7 @@ export function runGate(root, { quick = false } = {}) {
             severity: 'high',
             file: rel,
             line: i + 1,
-            detail: 'An email + password pair is written directly in the code.',
+            detail: 'A login (username or email) and password pair is written directly in the code.',
           });
         }
       });

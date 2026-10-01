@@ -574,6 +574,43 @@ console.log('\ntest-account registry');
     !PASSWORD_ASSIGNMENT.test('PW = ' + '"letmein123"'));
   check('quoted admin email still matches', SUSPICIOUS_ACCOUNT_EMAIL.test(`"email": "${adminEmail}"`));
 
+  // Real-world find: a genuine, unprompted AI coding session (not a
+  // scripted fixture) built a waitlist app and gated /admin with exactly
+  // this shape — a bare username, no email at all, "overridable" via env
+  // but shipping a real hardcoded default. The original patterns required
+  // an email for the account signal and direct adjacency for the password
+  // signal, so this slipped through to a false CLEARED TO SHIP.
+  const envFallbackUser = 'const ADMIN_USER = process.env.ADMIN_USER || ' + '"admin";';
+  const envFallbackPw = 'const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || ' + '"launchpad";';
+  check('bare "admin" username via env-fallback is an account signal (no email needed)',
+    SUSPICIOUS_ACCOUNT_EMAIL.test(envFallbackUser));
+  check('password via the same env-fallback idiom is a password signal',
+    PASSWORD_ASSIGNMENT.test(envFallbackPw));
+  check('a bare literal with no account-holder identifier nearby is NOT a signal on its own',
+    !SUSPICIOUS_ACCOUNT_EMAIL.test('const ROLE_DEFAULT = ' + '"admin";'));
+
+  // Same find, exercised end-to-end through the real gate (a real git repo,
+  // a real file, runGate) rather than just the two regexes in isolation —
+  // this is what actually shipped as a false CLEARED TO SHIP, so it's what
+  // must stay caught.
+  {
+    const realDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-realworld-'));
+    const realGit = (...args) =>
+      execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
+        '-c', 'commit.gpgsign=false', ...args], { cwd: realDir, stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.writeFileSync(path.join(realDir, 'server.js'),
+      `${envFallbackUser}\n${envFallbackPw}\nfunction requireAdmin() {}\n`);
+    realGit('init', '-q', '-b', 'main');
+    realGit('add', 'server.js');
+    realGit('commit', '-q', '-m', 'add admin gate');
+    const realFindings = runGate(realDir).findings;
+    check('the real generated app\'s admin gate is caught end-to-end',
+      realFindings.some((f) => f.id === 'test-account' && f.file === 'server.js'));
+    check('the real generated app is no longer falsely CLEARED',
+      verdictOf(realFindings) !== 'CLEARED');
+    fs.rmSync(realDir, { recursive: true, force: true });
+  }
+
   const dir = makeRepo('clean-app');
   const gitIn = (...args) =>
     execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
