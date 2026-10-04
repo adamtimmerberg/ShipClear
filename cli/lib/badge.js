@@ -34,6 +34,14 @@ import { run } from './git.js';
 
 export const WORKFLOW_REL = '.github/workflows/shipclear.yml';
 
+// The release that introduced `--strict`. The workflow must pin at least
+// this, because unknown flags are silently ignored: run `ship --no-fix
+// --strict` on 1.0.0 and you get plain `ship --no-fix`, which exits 0 on
+// SHIP WITH FIXES — a green badge for a repo with HIGH findings. Verified
+// against the published 1.0.0, not assumed. A caret range still picks up
+// later 1.x releases, so the badge keeps reflecting current knowledge.
+export const MIN_CLI_VERSION = '1.1.0';
+
 /** owner/repo from the origin remote, or null if it isn't a GitHub remote. */
 export function githubSlug(root) {
   let url;
@@ -98,9 +106,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # @latest on purpose: a security badge should reflect what is known to
-      # be unsafe today, not on the day it was installed.
-      - run: npx --yes shipclear@latest ship --no-fix --strict
+      # Pinned at or above the release that added --strict: an older CLI
+      # ignores the flag silently and would exit 0 on findings. The caret
+      # still takes later 1.x releases, so a security badge keeps
+      # reflecting what is known to be unsafe today.
+      - run: npx --yes shipclear@^${MIN_CLI_VERSION} ship --no-fix --strict
 `;
 }
 

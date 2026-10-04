@@ -33,7 +33,7 @@ npx shipclear ship
 That runs the full gate and gives you a verdict:
 
 ```
-  ShipClear v1.0.0 — ship report
+  ShipClear v1.1.0 — ship report
 
   🛑 CRITICAL  A secret key is written directly in your code
       where: server.js:7 — OpenAI API key: `sk-FAKE0…`

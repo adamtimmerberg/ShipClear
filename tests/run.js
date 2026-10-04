@@ -10,7 +10,7 @@ import { runGate } from '../cli/lib/checks.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
-import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL } from '../cli/lib/badge.js';
+import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -770,6 +770,16 @@ console.log('\nbadge');
   check('the generated workflow fetches full history for the history scan',
     yaml.includes('fetch-depth: 0'));
   check('the generated workflow runs on every push', /^on:\n  push:/m.test(yaml));
+  // Unknown flags are ignored silently, so an older CLI would run plain
+  // `ship --no-fix` and exit 0 on HIGH findings — a green badge for a repo
+  // that did not clear. Confirmed against the published 1.0.0.
+  check('the generated workflow pins a CLI new enough to know --strict',
+    yaml.includes(`shipclear@^${MIN_CLI_VERSION}`), yaml);
+  check('the pinned minimum is a version that actually exists', (() => {
+    const v = JSON.parse(fs.readFileSync(path.join(here, '../package.json'), 'utf8')).version;
+    const cmp = (a, b) => a.split('.').map(Number).reduce((acc, n, i) => acc || n - Number(b.split('.')[i]), 0);
+    return cmp(v, MIN_CLI_VERSION) >= 0;
+  })(), 'package.json version is behind MIN_CLI_VERSION');
   check('the generated workflow is named for the badge label', /^name: ShipClear$/m.test(yaml));
 
   // This repo's own workflow is what its own badge reports. If either flag
