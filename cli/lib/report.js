@@ -170,8 +170,12 @@ const QUICK_VERDICT_TEXT = {
   CLEARED: '✅ No secrets found in this quick check — but this is NOT the full gate (it looks at your current files only, not git history or dependencies).',
 };
 
-export const BADGE_MARKDOWN =
-  '[![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)](https://github.com/adamtimmerberg/ShipClear)';
+// Deliberately not a badge image. A static green "cleared to ship" picture
+// keeps making that claim on every later commit, checked or not — a false
+// GO, handed out by the tool whose whole job is preventing them. The real
+// badge is a live GitHub Actions status installed by `shipclear badge`,
+// which re-runs this gate on GitHub for every push (see lib/badge.js).
+export const BADGE_NEXT_STEP = 'shipclear badge';
 
 function sorted(findings) {
   return [...findings].sort(
@@ -229,8 +233,10 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
   // that claim. Never offer it off the back of a quick, partial check.
   if (verdict === 'CLEARED' && !quick) {
     lines.push('');
-    lines.push('  Show it off — add the badge to your README:');
-    lines.push('  ' + BADGE_MARKDOWN);
+    lines.push('  Show it off — put a badge in your README that stays honest:');
+    lines.push(`  ${BADGE_NEXT_STEP}`);
+    lines.push('  (It re-runs this gate on GitHub for every push, so it turns red if a');
+    lines.push('   commit lands that ShipClear would not clear.)');
   } else if (open.length) {
     // A stuck first-timer needs the pointer exactly here, at the verdict.
     lines.push('  Stuck on any of the above? Plain-English help: https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
@@ -251,11 +257,13 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
   out.push(`## Verdict: ${VERDICT_TEXT[verdict]}`);
   out.push('');
   if (verdict === 'CLEARED') {
-    out.push('Cleared! Add the badge to your README to show your app passed:');
+    out.push('Cleared! To show this in your README, run:');
     out.push('');
-    out.push('```markdown');
-    out.push(BADGE_MARKDOWN);
+    out.push('```bash');
+    out.push(BADGE_NEXT_STEP);
     out.push('```');
+    out.push('');
+    out.push('That installs a badge backed by a GitHub Actions run of this same gate, so it reflects what is actually on GitHub — green while every pushed commit clears, red as soon as one does not, grey if nothing was checked.');
     out.push('');
   }
   if (open.length === 0) {

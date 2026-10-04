@@ -7,6 +7,7 @@
 Your AI writes code fast. ShipClear makes sure it's safe to ship —
 free, open source, runs 100% locally, works with every AI coding tool.
 
+[![ShipClear](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml/badge.svg?branch=main&event=push)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml)
 [![CI](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml/badge.svg)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
@@ -85,7 +86,25 @@ Detection is tuned against real-world starter repos, with a false-positive regre
 
 Plus a ten-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, and an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools).
 
-Pass the gate and you'll get a badge for your README: ![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)
+## The badge can't lie
+
+Pass the gate and `shipclear badge` adds a **cleared to ship** badge to your README — one command, and it maintains itself from then on:
+
+```bash
+npx shipclear badge
+```
+
+Most badges are a static green image: paste it once and it keeps vouching for every commit you make afterwards, checked or not. That's a security claim nobody verified, which is exactly what this tool exists to prevent — so ShipClear doesn't hand you one. Instead `shipclear badge` installs a GitHub Actions workflow that re-runs this gate on GitHub for **every push**, and a badge that shows that workflow's real result:
+
+| | means |
+|---|---|
+| 🟢 **passing** | every commit pushed to this branch cleared the gate — including its git history, so an old leaked secret keeps it red until the history is actually cleaned |
+| 🔴 **failing** | a commit landed that ShipClear would not clear |
+| ⚪ **no status** | nothing has been checked, so nothing is claimed |
+
+The workflow runs `shipclear ship --no-fix --strict`: `--no-fix` so the verdict describes the commit as pushed rather than a copy the job quietly repaired, and `--strict` so only a full CLEARED counts as green. Skipping the gate locally can't produce a green badge — only a real passing run on GitHub can. (`--strict` is useful in your own CI for the same reason.)
+
+Deleting the workflow or turning off Actions doesn't fake a green badge either — the badge drops to "no status". Nothing stops someone from deliberately pointing the badge at a different workflow; it defends against forgetting, not fraud.
 
 ## Privacy, by architecture
 

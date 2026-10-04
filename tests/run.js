@@ -10,6 +10,7 @@ import { runGate } from '../cli/lib/checks.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
+import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL } from '../cli/lib/badge.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -307,8 +308,8 @@ console.log('\nquick scan verdict is never confusable with the full gate\'s');
   check('full gate says CLEARED TO SHIP', full.includes(VERDICT_TEXT.CLEARED));
   check('quick scan does NOT say CLEARED TO SHIP', !quick.includes(VERDICT_TEXT.CLEARED));
   check('quick scan verdict text differs from the full gate\'s', full !== quick);
-  check('quick scan never offers the ship-worthy badge', !quick.includes('add the badge'));
-  check('full gate on a real CLEARED verdict does offer the badge', full.includes('add the badge'));
+  check('quick scan never offers the ship-worthy badge', !quick.includes('shipclear badge'));
+  check('full gate on a real CLEARED verdict does offer the badge', full.includes('shipclear badge'));
   // Round 4: "scan said Nice, ship said CRITICAL thirty seconds later" —
   // the quick verdict must say what it doesn't look at, not just that it's partial.
   check('quick scan CLEARED says what it skipped', /current files only, not git history/.test(quick));
@@ -683,6 +684,212 @@ console.log('\ncli');
       r.stderr.slice(0, 200));
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// --- the README badge ---
+// A badge is a security claim, so it is held to the verdict's standard: it
+// must never read green for code nobody checked. These tests pin the three
+// things that guarantee that — the badge is a live workflow status, the
+// workflow grades the commit as pushed (--no-fix) and only on a full
+// CLEARED (--strict) — plus the placement bug found by running the command
+// on this very repo.
+console.log('\nbadge');
+{
+  const bin = path.join(here, '../cli/bin/shipclear.js');
+
+  const newRepo = (name) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `shipclear-badge-${name}-`));
+    execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    return dir;
+  };
+
+  // --- slug parsing: every remote form a real user might have ---
+  for (const [url, want] of [
+    ['https://github.com/o/r.git', 'o/r'],
+    ['https://github.com/o/r', 'o/r'],
+    ['git@github.com:o/r.git', 'o/r'],
+    ['ssh://git@github.com/o/r.git', 'o/r'],
+  ]) {
+    const dir = newRepo('slug');
+    execFileSync('git', ['remote', 'add', 'origin', url], { cwd: dir });
+    const slug = githubSlug(dir);
+    check(`githubSlug reads ${url}`, slug && `${slug.owner}/${slug.repo}` === want,
+      JSON.stringify(slug));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    const dir = newRepo('nongh');
+    execFileSync('git', ['remote', 'add', 'origin', 'https://gitlab.com/o/r.git'], { cwd: dir });
+    check('githubSlug returns null for a non-GitHub remote', githubSlug(dir) === null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // --- the badge must be a live status, never a hardcoded color ---
+  const badge = badgeMarkdown({ owner: 'o', repo: 'r', branch: 'main' });
+  check('the badge points at the ShipClear workflow run',
+    badge.includes('/actions/workflows/shipclear.yml/badge.svg'), badge);
+  check('the badge is scoped to the branch and to pushed code',
+    badge.includes('branch=main') && badge.includes('event=push'), badge);
+  check('the badge carries no hardcoded color', !/brightgreen|-green\)|shields\.io\/badge\//.test(badge), badge);
+
+  // --- placement ---
+  check('an existing static badge is replaced in place',
+    withBadge('# App\n\n[![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)](https://x)\n', badge)
+      .text.includes(badge));
+  check('the retired static badge does not survive the replacement',
+    !withBadge('# App\n\n[![ShipClear: cleared to ship](https://img.shields.io/badge/ShipClear-cleared%20to%20ship-brightgreen)](https://x)\n', badge)
+      .text.includes('shields.io/badge/ShipClear'));
+  check('an existing badge row is joined, not disturbed', (() => {
+    const r = withBadge('# App\n\n[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\nprose\n', badge);
+    return r.text.includes(badge) && r.text.includes('[![MIT]');
+  })());
+  check('with no badge row the badge goes under the title',
+    withBadge('# App\n\nprose\n', badge).text.startsWith('# App\n\n' + badge));
+  check('with no title at all the badge goes to the top',
+    withBadge('just prose\n', badge).text.startsWith(badge));
+  check('re-running leaves the README untouched',
+    withBadge('# App\n\n' + badge + '\n', badge).changed === false);
+
+  // The matcher used to be a "shipclear" substring search, which in this
+  // repo matched github.com/adamtimmerberg/ShipClear in EVERY badge URL and
+  // replaced the CI badge instead of adding ours. Found by running
+  // `shipclear badge` on this project's own README.
+  {
+    const ci = '[![CI](https://github.com/someone/shipclear-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/someone/shipclear-tools)';
+    const r = withBadge(`# Tools\n\n${ci}\n`, badge);
+    check('a repo whose name contains "shipclear" keeps its other badges',
+      r.text.includes(ci) && r.text.includes(badge), r.text);
+  }
+
+  // --- the generated workflow carries the whole guarantee ---
+  const yaml = workflowYaml();
+  check('the generated workflow grades the commit as pushed (--no-fix)', yaml.includes('--no-fix'));
+  check('the generated workflow only passes on CLEARED (--strict)', yaml.includes('--strict'));
+  check('the generated workflow fetches full history for the history scan',
+    yaml.includes('fetch-depth: 0'));
+  check('the generated workflow runs on every push', /^on:\n  push:/m.test(yaml));
+  check('the generated workflow is named for the badge label', /^name: ShipClear$/m.test(yaml));
+
+  // This repo's own workflow is what its own badge reports. If either flag
+  // were ever dropped from it, this project's badge could show green for a
+  // repo that did not fully clear — the exact failure it warns users about.
+  {
+    const own = fs.readFileSync(path.join(here, '../.github/workflows/shipclear.yml'), 'utf8');
+    check("ShipClear's own badge workflow uses --no-fix --strict",
+      /ship --no-fix --strict/.test(own));
+  }
+
+  // --- the command, end to end ---
+  {
+    const dir = newRepo('cmd');
+    fs.writeFileSync(path.join(dir, 'README.md'), '# LaunchPad\n\nMy app.\n');
+    fs.writeFileSync(path.join(dir, 'app.js'), 'console.log("hi");\n');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+
+    // No remote: a live badge has nothing to report on, so it must refuse
+    // rather than write a badge that can never turn green.
+    const noRemote = spawnSync('node', [bin, 'badge'], { cwd: dir, encoding: 'utf8' });
+    check('badge refuses without a GitHub remote', noRemote.status === 1, `exit ${noRemote.status}`);
+    check('badge explains how to get a remote', /remote add origin/.test(noRemote.stderr));
+    check('badge writes no workflow when it refuses',
+      !fs.existsSync(path.join(dir, WORKFLOW_REL)));
+
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/someone/launchpad.git'], { cwd: dir });
+    const r = spawnSync('node', [bin, 'badge'], { cwd: dir, encoding: 'utf8' });
+    check('badge succeeds once there is a GitHub remote', r.status === 0, r.stderr);
+    check('badge writes the workflow', fs.existsSync(path.join(dir, WORKFLOW_REL)));
+    check('badge puts the badge in the README',
+      fs.readFileSync(path.join(dir, 'README.md'), 'utf8')
+        .includes('someone/launchpad/actions/workflows/shipclear.yml/badge.svg'));
+    check('badge says the badge reads "no status" until the first run',
+      /no status/.test(r.stdout));
+
+    // Second run must not duplicate anything.
+    spawnSync('node', [bin, 'badge'], { cwd: dir, encoding: 'utf8' });
+    const readme = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+    check('badge is idempotent', readme.split('shipclear.yml/badge.svg').length - 1 === 1);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // An existing workflow is never overwritten — but one missing the flags
+  // would let the badge read green for a repo that only partly cleared, so
+  // it has to be called out rather than left as a quiet lie.
+  {
+    const dir = newRepo('existing');
+    fs.writeFileSync(path.join(dir, 'README.md'), '# App\n');
+    fs.mkdirSync(path.join(dir, '.github/workflows'), { recursive: true });
+    const theirs = 'name: ShipClear\non: push\njobs:\n  gate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npx shipclear ship\n';
+    fs.writeFileSync(path.join(dir, WORKFLOW_REL), theirs);
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: dir });
+    const res = installBadge(dir);
+    check('an existing workflow is left exactly as it was',
+      fs.readFileSync(path.join(dir, WORKFLOW_REL), 'utf8') === theirs);
+    check('an existing workflow missing the flags is called out',
+      res.warnings.some((w) => /--no-fix --strict/.test(w)), JSON.stringify(res.warnings));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // --- --strict: the exit code the badge is computed from ---
+  // Plain `ship` exits 0 on SHIP WITH FIXES, because a human reads the
+  // report and decides. A badge cannot read, so --strict must fail there.
+  {
+    const dir = newRepo('strict-high');
+    fs.writeFileSync(path.join(dir, 'app.js'), 'console.log(1);\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules/\n');
+    fs.writeFileSync(path.join(dir, '.env'), 'API_TOKEN=' + 'placeholder-value-1234\n');
+    execFileSync('git', ['add', 'app.js', '.gitignore'], { cwd: dir });
+    execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+
+    const plain = spawnSync('node', [bin, 'ship', '--no-fix'], { cwd: dir, encoding: 'utf8' });
+    check('plain ship still exits 0 on SHIP WITH FIXES', plain.status === 0, plain.stdout);
+    check('that repo really does have an unresolved HIGH finding',
+      /SHIP WITH FIXES/.test(plain.stdout), plain.stdout);
+
+    const strict = spawnSync('node', [bin, 'ship', '--no-fix', '--strict'], { cwd: dir, encoding: 'utf8' });
+    check('--strict exits 1 on SHIP WITH FIXES', strict.status === 1, `exit ${strict.status}`);
+    check('--strict says why it failed', /--strict: failing/.test(strict.stdout));
+
+    // The other half of the guarantee: without --no-fix the run repairs its
+    // own checkout and reports the repaired copy as CLEARED — a green badge
+    // for a commit that was pushed with the finding still in it.
+    const fixing = spawnSync('node', [bin, 'ship', '--strict'], { cwd: dir, encoding: 'utf8' });
+    check('--strict alone can still clear by fixing its own checkout (why the workflow uses --no-fix)',
+      fixing.status === 0 && /CLEARED/.test(fixing.stdout), `exit ${fixing.status}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    const dir = newRepo('strict-clean');
+    fs.writeFileSync(path.join(dir, 'app.js'), 'console.log(1);\n');
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n.env.*\n!.env.example\nSHIP-REPORT.md\n');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+    const r = spawnSync('node', [bin, 'ship', '--no-fix', '--strict'], { cwd: dir, encoding: 'utf8' });
+    check('--strict exits 0 on a genuinely clean repo', r.status === 0, r.stdout);
+    check('--strict adds no failure note when it passes', !/--strict: failing/.test(r.stdout));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // --- the invariant: ShipClear never hands out a permanently-green image ---
+  check('the report module contains no static badge image',
+    !/shields\.io\/badge\/ShipClear/.test(
+      fs.readFileSync(path.join(here, '../cli/lib/report.js'), 'utf8')));
+  check('a CLEARED markdown report offers the live badge, not a green picture', (() => {
+    const md = renderMarkdown({ findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0' });
+    return md.includes('shipclear badge') && !/shields\.io\/badge/.test(md);
+  })());
+  check('a CLEARED terminal report offers the live badge, not a green picture', (() => {
+    const out = renderTerminal({ findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0' });
+    return out.includes('shipclear badge') && !/shields\.io\/badge/.test(out);
+  })());
+  // A quick scan skips history and dependencies, so it has not earned any
+  // badge claim at all.
+  check('a quick scan never mentions the badge', (() => {
+    const out = renderTerminal({ findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0', quick: true });
+    return !/badge/i.test(out);
+  })());
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);

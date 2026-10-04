@@ -1,0 +1,38 @@
+# The workflow behind the "ShipClear" badge in README.md.
+#
+# This is what makes the badge a fact rather than a decoration: it re-runs
+# the gate on GitHub for every push, so the badge describes the code that is
+# actually on GitHub. A commit ShipClear wouldn't clear fails this job and
+# the badge turns red; if nothing ran, the badge reads "no status" instead of
+# claiming anything.
+#
+# This repo runs its own CLI from the checkout rather than `npx shipclear`,
+# so the badge reflects the gate as it exists in that commit.
+#
+# --no-fix: judge the commit as pushed. Plain `ship` would add the missing
+#           .gitignore line to its own checkout and then report it clean.
+# --strict: only a clean CLEARED verdict passes. Plain `ship` exits 0 on
+#           "SHIP WITH FIXES", which would paint HIGH findings green.
+name: ShipClear
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the gate's history scan needs full history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # No install step: ShipClear has zero runtime dependencies, on purpose.
+      - name: ShipClear clears its own repo
+        run: node cli/bin/shipclear.js ship --no-fix --strict

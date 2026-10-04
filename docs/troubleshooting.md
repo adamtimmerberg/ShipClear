@@ -60,6 +60,22 @@ That's the "Semantic checks" section at the bottom of `SHIP-REPORT.md`, and it's
 
 Expected. Deleting the fake account also removed what your login checked against, so you need a *real* login system now. The easiest path: ask the AI assistant you built the app with to "replace the hardcoded login with a real login system." (Common choices it might use: Supabase Auth, Clerk, Auth0, NextAuth — but you don't have to choose; it can.)
 
+## "My badge says `no status` / is grey"
+
+Nothing has been checked yet, and the badge is saying so rather than guessing. It turns green or red after the first push that runs the workflow — check the **Actions** tab of your repo on GitHub. If no run appears there at all: make sure you committed **and pushed** `.github/workflows/shipclear.yml`, and that Actions is enabled for the repo (Settings → Actions → General).
+
+## "My badge went red but `shipclear ship` passes on my computer"
+
+Three usual reasons, in order of likelihood:
+
+1. **You haven't pushed your fix yet.** The badge grades what's on GitHub, not what's on your laptop. `git add -A && git commit -m "fix" && git push`.
+2. **The findings aren't critical.** The badge requires a full ✅ CLEARED. Plain `shipclear ship` exits successfully on 🟡 SHIP WITH FIXES so a human can decide — the badge can't decide, so it demands a clean pass. Run `npx shipclear ship --no-fix --strict` to see exactly what the badge sees.
+3. **`shipclear ship` fixed something for you locally, and the fix isn't committed.** The gate applies safe fixes (like adding `.env` to `.gitignore`) and then reports you clean. GitHub gets the unfixed version, so it reports the finding. `git status` will show the changed files — commit them.
+
+## "Can I just put the green badge in my README myself?"
+
+You can, but it would be a lie the first time you push something unchecked, and anyone reading your repo can click the badge and see there's no run behind it. That's exactly why `shipclear badge` installs a real check instead of handing you a green image.
+
 ---
 
 ## Mini-glossary

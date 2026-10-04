@@ -68,6 +68,7 @@ npx shipclear ship    # the full gate → SHIP-REPORT.md + verdict
 npx shipclear ship --fix-history
                       # after fixing everything else: erase old commits that held a secret
                       # (only for repos never pushed anywhere; refuses if it would lose any work)
+npx shipclear badge   # add a self-updating "cleared to ship" badge to your README
 ```
 
 The full report (`SHIP-REPORT.md`) ends with a checklist meant for an AI to work through with you — if you don't have one built into your terminal, paste that checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to go through the list, or ask a developer friend.
@@ -81,6 +82,28 @@ The full report (`SHIP-REPORT.md`) ends with a checklist meant for an AI to work
 - ✅ **CLEARED TO SHIP** — no blocking findings.
 - 🟡 **SHIP WITH FIXES** — nothing catastrophic; close the listed items first.
 - 🛑 **DO NOT SHIP** — a critical finding (a leaked secret, a committed `.env`) needs fixing *and* usually a key rotation. The report tells you exactly what to do, step by step.
+
+## The badge
+
+Once you've passed the gate, one command puts a **cleared to ship** badge in your README:
+
+```bash
+npx shipclear badge
+```
+
+It changes two files — your `README.md` (the badge itself) and `.github/workflows/shipclear.yml` (a GitHub Actions workflow). Commit and push both, and the badge is live:
+
+```bash
+git add -A && git commit -m "add ShipClear badge" && git push
+```
+
+That workflow is the point. Every time you push, GitHub re-runs the gate on the code you actually pushed, and the badge shows the real result — green while every pushed commit clears, red the moment one doesn't, and grey ("no status") before anything has been checked. You never update it by hand, and you can't make it green by skipping the gate on your laptop.
+
+**Expect grey at first.** Until that first push triggers the workflow, the badge honestly reports that nothing has been checked yet.
+
+**If it goes red,** run `npx shipclear ship` locally, fix what it lists, and push again. Red isn't the badge being broken — it's the badge doing its job.
+
+If your project isn't on GitHub yet, `shipclear badge` will tell you so and stop, rather than giving you a badge that could never turn green.
 
 ## False positives
 

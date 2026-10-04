@@ -7,6 +7,7 @@ import { applyFixes, resetHistory, installHook, envExampleFrom, GITIGNORE_BLOCK 
 import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/report.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
+import { installBadge } from '../lib/badge.js';
 import { loadIgnore } from '../lib/ignore.js';
 
 const pkg = JSON.parse(
@@ -22,10 +23,16 @@ Usage:
   shipclear scan --staged  Scan only what's about to be committed (used by the guard)
   shipclear ship           Full safe-to-ship gate → SHIP-REPORT.md + verdict
   shipclear ship --no-fix  Same, but don't apply automatic fixes
+  shipclear ship --strict  Same, but treat ANY finding as a failure (exit 1 unless
+                           the verdict is CLEARED) — for CI and the README badge
   shipclear ship --fix-history
                            Also erase git history to remove a leaked secret from
                            old commits (only when nothing was ever pushed; refuses
                            if it would lose branches or stashes)
+  shipclear badge          Add a self-updating "cleared to ship" badge to your
+                           README, backed by a GitHub Actions run of this gate on
+                           every push — so it turns red if an unchecked or failing
+                           commit lands
 
 Everything runs locally. Nothing is uploaded, ever.
 Docs: https://github.com/adamtimmerberg/ShipClear
@@ -114,7 +121,7 @@ function cmdScan(root) {
   return findings.some((f) => f.severity === 'critical') ? 1 : 0;
 }
 
-function cmdShip(root, { fix = true, fixHistory = false } = {}) {
+function cmdShip(root, { fix = true, fixHistory = false, strict = false } = {}) {
   let { findings, notes } = runGate(root);
   const fixes = fix ? applyFixes(root, findings) : [];
 
@@ -131,10 +138,42 @@ function cmdShip(root, { fix = true, fixHistory = false } = {}) {
   }
 
   const verdict = verdictOf(findings);
+  // Strict mode exists for the README badge and CI: a badge may only be
+  // green on a full CLEARED, so "SHIP WITH FIXES" — which exits 0 normally,
+  // because a human can read it and decide — has to fail here.
+  if (strict && verdict !== 'CLEARED') {
+    notes.push('--strict: failing because the verdict is not CLEARED. Fix the findings above; a ShipClear badge stays red until they are gone.');
+  }
   const result = { findings, notes, verdict, fixes, version: pkg.version };
   fs.writeFileSync(path.join(root, 'SHIP-REPORT.md'), renderMarkdown(result));
   console.log(renderTerminal(result));
+  if (strict) return verdict === 'CLEARED' ? 0 : 1;
   return verdict === 'DO_NOT_SHIP' ? 1 : 0;
+}
+
+function cmdBadge(root) {
+  if (!isGitRepo(root)) {
+    console.error("\n  This folder isn't set up with git yet, so there's no GitHub repo for a badge to report on.");
+    console.error('  Run `git init` here, push the project to GitHub, then run `shipclear badge` again.\n');
+    return 1;
+  }
+  const result = installBadge(root);
+  if (!result.ok) {
+    console.error(`\n  ShipClear can't add the badge yet: ${result.reason}\n`);
+    return 1;
+  }
+  console.log('\n  ShipClear badge installed.');
+  for (const d of result.done) console.log(`   ✔ ${d}`);
+  for (const w of result.warnings) console.log(`   ⚠ ${w}`);
+  console.log('\n  Commit and push both files to switch it on:');
+  console.log('    git add -A && git commit -m "add ShipClear badge" && git push');
+  // The badge reads "no status" until the workflow has run once. Saying so
+  // here stops that grey badge from looking like a broken install.
+  console.log(`\n  It shows "no status" until that first push runs the workflow — grey because`);
+  console.log('  nothing has been checked yet, which is the honest answer at that point.');
+  console.log(`  Then it tracks the \`${result.branch}\` branch: green while every pushed commit`);
+  console.log('  clears this gate, red the moment one does not.\n');
+  return 0;
 }
 
 const args = process.argv.slice(2);
@@ -156,9 +195,16 @@ try {
       const fixHistory = args.includes('--fix-history');
       // A history reset needs .gitignore in place first so the fresh commit
       // doesn't re-add .env — so --fix-history implies the additive fixes.
-      exitCode = cmdShip(root, { fix: !args.includes('--no-fix') || fixHistory, fixHistory });
+      exitCode = cmdShip(root, {
+        fix: !args.includes('--no-fix') || fixHistory,
+        fixHistory,
+        strict: args.includes('--strict'),
+      });
       break;
     }
+    case 'badge':
+      exitCode = cmdBadge(root);
+      break;
     case '--version':
     case '-v':
       console.log(pkg.version);
