@@ -1,0 +1,5 @@
+# Copy to .env. This file is committed, so everything in it is public.
+ENVIRONMENT=development
+POSTGRES_PASSWORD=recipes-dev-password
+MINIO_ROOT_PASSWORD=
+SECRET_KEY=

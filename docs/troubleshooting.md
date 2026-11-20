@@ -78,6 +78,22 @@ You can, but it would be a lie the first time you push something unchecked, and 
 
 ---
 
+## "Is `--probe` safe to run? Will it break my live site?"
+
+It makes ordinary read requests — the same kind your browser makes when it loads a page. It never
+sends anything, never logs in, never tries to get past anything, and only touches the address you
+type plus paths under it. It's about 19 requests in total, which is less traffic than one person
+visiting your site. Nothing is uploaded anywhere: ShipClear has no server to upload to.
+
+Only point it at a site you own. Probing someone else's site isn't dangerous to them, but it isn't
+yours to check.
+
+## "`--probe` says it wasn't run"
+
+Two reasons. Either you answered no to the confirmation, or there was no terminal to ask in — which
+happens when it runs inside a script, a CI job, or a tool that captures the output. Add `--yes` to
+say "don't ask, I already decided" in those places.
+
 ## Mini-glossary
 
 - **Terminal** — the text window where you type commands instead of clicking. (In Bolt/Lovable/Replit, look for a "Terminal" or "Console" tab; on Mac, the Terminal app; on Windows, PowerShell.)
@@ -89,3 +105,8 @@ You can, but it would be a lie the first time you push something unchecked, and 
 - **`.env.example`** — a safe-to-share template: the same setting *names* as `.env`, but with the values blank.
 - **rotate a key** — get a brand-new key from whoever issued it (e.g. log into OpenAI and generate a new one) and stop using the old one. This is what actually protects you after a leak.
 - **force-push** — overwrite the copy of history on GitHub with your cleaned-up local version. Fine for a repo only you work on.
+- **default password** — the password a piece of software ships with, written in its own documentation (`postgres`, `minioadmin`, `admin`). Everyone knows them, including the programs that scan the internet looking for them, which is why one left in place is treated as serious as a leaked key.
+- **environment variable** — a setting your app reads from outside its own code, so the value can differ between your laptop and the live site. `.env` is where you keep yours.
+- **bucket** — a folder in a storage service (S3, MinIO, Cloud Storage) where your app keeps uploaded files. "Listing" a bucket means asking it for an index of everything inside, which is why read-only-but-listable is still bad news.
+- **proxy / reverse proxy** — the program that takes requests from the internet and decides which part of your app answers them (Caddy, nginx, Traefik). A route that is too broad can hand a visitor a service you never meant to publish.
+- **security headers** — short instructions your server sends with each page telling the browser what the page is allowed to do (`Content-Security-Policy` and friends). They only help on the responses that are actual pages.

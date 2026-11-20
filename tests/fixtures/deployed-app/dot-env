@@ -1,0 +1,8 @@
+# FIXTURE: the live config of a deployed app. Never committed (see .gitignore),
+# which is exactly why the rest of the gate cannot see it.
+ENVIRONMENT=production
+POSTGRES_PASSWORD=recipes-dev-password
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+SECRET_KEY=change-me-dev-only
+NEXT_PUBLIC_POSTHOG_KEY=phc-public-by-design

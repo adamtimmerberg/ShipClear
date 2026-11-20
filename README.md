@@ -59,7 +59,7 @@ Most tools scan your app *after* you've made the mistake. ShipClear rides along 
 |---|---|
 | 🧠 **Prevention** | Rules for your AI assistant so secrets never get hardcoded in the first place — `.env` from the first line of code, no test accounts, no real data in the repo. |
 | 🚫 **Enforcement** | A git commit guard (`shipclear setup`) that blocks any commit containing secrets or a `.env` file. Deterministic — it isn't the AI deciding to be careful. (If the scanner itself can't run — you're offline, say — it lets the commit through with a warning rather than blocking your work; it fails safe, not stuck.) |
-| ✅ **The gate** | `shipclear ship`: 13 deterministic checks + a semantic checklist for your AI, ending in one verdict — cleared to ship, or not. Found a secret in old commits? `shipclear ship --fix-history` erases that history safely (never-pushed repos only; it refuses if it would lose anything). |
+| ✅ **The gate** | `shipclear ship`: 22 deterministic checks — across your code, your git history, *and* the config you deploy with (`.env`, docker-compose, proxy routes, bucket policies) — plus a semantic checklist for your AI, ending in one verdict — cleared to ship, or not. Found a secret in old commits? `shipclear ship --fix-history` erases that history safely (never-pushed repos only; it refuses if it would lose anything). |
 
 ## Works with every AI coding tool
 
@@ -106,13 +106,27 @@ The workflow runs `shipclear ship --no-fix --strict`: `--no-fix` so the verdict 
 
 Deleting the workflow or turning off Actions doesn't fake a green badge either — the badge drops to "no status". Nothing stops someone from deliberately pointing the badge at a different workflow; it defends against forgetting, not fraud.
 
+## Checking the site you actually deployed
+
+Some problems don't exist in your files. A storage bucket's permissions are applied at runtime; a missing response header is an absence; a proxy route's real behaviour is a behaviour. So the gate can also ask your live site:
+
+```bash
+npx shipclear ship --probe https://your-app.com
+```
+
+It reports what is genuinely reachable — an open `/metrics` or `/api/docs`, a storage folder that hands out a list of every file in it, a home page served without the headers that protect pages — and confirms (or quietly drops) the findings the file scan could only suspect.
+
+The rules it works under: **`GET` only**, so nothing is written, changed or deleted; no logins, passwords, or attempts to get past anything; only the one address you type and paths beneath it; and it tells you all of that and waits for a yes before the first request. It's off unless you ask for it, and the AI adapters are instructed never to run it on your behalf. Only point it at a site you own.
+
 ## Privacy, by architecture
 
 ShipClear runs entirely on your machine. **No account. No server. No telemetry. Nothing is uploaded, ever.** It has zero runtime dependencies — what you install is what's in this repo, and CI enforces that by not having an install step.
 
+The single exception is opt-in and explicit: `ship --probe <url>` makes read-only requests to the address you give it, after asking. It still sends nothing anywhere else, and no part of your code or report leaves your machine.
+
 ## What ShipClear can't do
 
-Honesty is a feature in a security tool. ShipClear does **not**: audit your business logic, test your deployed infrastructure, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
+Honesty is a feature in a security tool. ShipClear does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
 
 ## Contributing
 

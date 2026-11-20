@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
 import { applyFixes, resetHistory, installHook, envExampleFrom, GITIGNORE_BLOCK } from '../lib/fix.js';
@@ -8,6 +9,7 @@ import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
 import { installBadge } from '../lib/badge.js';
+import { runProbe, normalizeBase } from '../lib/probe.js';
 import { loadIgnore } from '../lib/ignore.js';
 
 const pkg = JSON.parse(
@@ -25,6 +27,13 @@ Usage:
   shipclear ship --no-fix  Same, but don't apply automatic fixes
   shipclear ship --strict  Same, but treat ANY finding as a failure (exit 1 unless
                            the verdict is CLEARED) — for CI and the README badge
+  shipclear ship --probe https://your-app.com
+                           Also ask your deployed site what is actually
+                           reachable: open debug pages, a storage folder anyone
+                           can list, missing page headers. Read-only (GET
+                           only), asks you to confirm first, and only ever
+                           touches the address you type. Add --yes to skip the
+                           confirmation (for scripts).
   shipclear ship --fix-history
                            Also erase git history to remove a leaked secret from
                            old commits (only when nothing was ever pushed; refuses
@@ -34,7 +43,8 @@ Usage:
                            every push — so it turns red if an unchecked or failing
                            commit lands
 
-Everything runs locally. Nothing is uploaded, ever.
+Everything runs locally and nothing is ever uploaded. The one exception is
+opt-in: --probe makes read-only requests to the single address you give it.
 Docs: https://github.com/adamtimmerberg/ShipClear
 `;
 
@@ -121,7 +131,34 @@ function cmdScan(root) {
   return findings.some((f) => f.severity === 'critical') ? 1 : 0;
 }
 
-function cmdShip(root, { fix = true, fixHistory = false, strict = false } = {}) {
+// The probe reaches out to the network, which nothing else in ShipClear does.
+// So it is opt-in per run, it says exactly what it will do, and it asks —
+// unless the user passed --yes, or there is no terminal to ask in (a CI job),
+// where it declines rather than guessing.
+async function confirmProbe(url) {
+  const { base, error } = normalizeBase(url);
+  if (error) {
+    console.error(`\n  ${error}\n`);
+    return null;
+  }
+  if (!process.stdin.isTTY) {
+    return { base, confirmed: false, why: 'there is no terminal here to confirm in — re-run it yourself, or add --yes if you are scripting this' };
+  }
+  console.log('');
+  console.log(`  --probe will make read-only requests to ${base}:`);
+  console.log('    • GET only. Nothing is written, changed or deleted.');
+  console.log('    • No logins, no passwords, no attempts to get past anything.');
+  console.log('    • Only that address and paths under it — nowhere else.');
+  console.log('    • It checks for open debug pages, a storage folder anyone can list,');
+  console.log('      and whether your home page sends the headers that protect pages.');
+  console.log('  Only do this against a site you own.');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question(`\n  Probe ${base}? (y/N) `);
+  rl.close();
+  return { base, confirmed: /^y(es)?$/i.test(answer.trim()), why: 'you answered no' };
+}
+
+async function cmdShip(root, { fix = true, fixHistory = false, strict = false, probeUrl = null, assumeYes = false } = {}) {
   let { findings, notes } = runGate(root);
   const fixes = fix ? applyFixes(root, findings) : [];
 
@@ -134,6 +171,19 @@ function cmdShip(root, { fix = true, fixHistory = false, strict = false } = {}) 
       ({ findings, notes } = runGate(root));
     } else {
       notes.push(`--fix-history was not applied: ${refused}`);
+    }
+  }
+
+  if (probeUrl) {
+    const decision = await confirmProbe(probeUrl);
+    if (decision === null) {
+      notes.push('--probe was not run: that address could not be read.');
+    } else if (!decision.confirmed && !assumeYes) {
+      notes.push(`--probe was not run: ${decision.why}. Everything above is from your files alone.`);
+    } else {
+      const probed = await runProbe(decision.base, findings);
+      findings.push(...probed.findings);
+      notes.push(...probed.notes);
     }
   }
 
@@ -176,6 +226,16 @@ function cmdBadge(root) {
   return 0;
 }
 
+/** Value of a `--flag value` or `--flag=value` argument, or null. */
+function flagValue(argv, flag) {
+  const inline = argv.find((a) => a.startsWith(`${flag}=`));
+  if (inline) return inline.slice(flag.length + 1) || null;
+  const i = argv.indexOf(flag);
+  if (i === -1) return null;
+  const next = argv[i + 1];
+  return next && !next.startsWith('-') ? next : null;
+}
+
 const args = process.argv.slice(2);
 const cmd = args[0];
 const root = process.cwd();
@@ -195,10 +255,12 @@ try {
       const fixHistory = args.includes('--fix-history');
       // A history reset needs .gitignore in place first so the fresh commit
       // doesn't re-add .env — so --fix-history implies the additive fixes.
-      exitCode = cmdShip(root, {
+      exitCode = await cmdShip(root, {
         fix: !args.includes('--no-fix') || fixHistory,
         fixHistory,
         strict: args.includes('--strict'),
+        probeUrl: flagValue(args, '--probe'),
+        assumeYes: args.includes('--yes'),
       });
       break;
     }

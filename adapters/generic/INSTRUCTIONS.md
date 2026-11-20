@@ -42,6 +42,7 @@ These rules are for AI coding agents and assistants. Follow them on every task, 
 1. Run the deterministic scan: `npx --yes shipclear ship` (it writes `SHIP-REPORT.md` and applies safe fixes automatically).
 2. Read `SHIP-REPORT.md` and walk the user through each finding in plain English.
    - **Never run `shipclear ship --fix-history` on the user's behalf.** It erases git history. If a finding recommends it, explain what it does, confirm the other findings are fixed first, and let the user run it — or run it only after they explicitly say to.
+   - **Never run `shipclear ship --probe <url>` unless the user asks for it and names the address.** It makes real (read-only) requests to a live site. Deciding which site may be contacted is the user's, not yours. You may *tell* them it exists — it confirms findings a file-based scan cannot see, like a storage folder anyone can list — and let them run it.
 3. Perform the semantic checks below yourself — these need code understanding and are your responsibility:
 
 1. **Hidden accounts:** search for any route, seed, migration, or conditional that grants access via a fixed credential, magic string, or special email — including ones the AI itself created during this project. Check `.shipclear/test-accounts.json` and confirm every listed credential is absent from code and the production database plan.
@@ -53,7 +54,12 @@ These rules are for AI coding agents and assistants. Follow them on every task, 
 7. **Session and abuse surface:** session tokens in httpOnly cookies rather than localStorage; rate limiting (or provider-equivalent) on login, signup, and password-reset endpoints.
 8. **Debug surface:** look for debug endpoints, verbose stack traces returned to users, `console.log` of sensitive values, and permissive CORS on authenticated APIs.
 9. **AI surface** (when the app itself calls LLMs or runs agents/MCP tools): treat user input and any external content entering prompts as untrusted; never execute, render as HTML, or write to the database unvalidated model output; give agent/MCP tools the narrowest permissions that work, and keep agents away from production resources during testing.
-10. **Report merge:** append semantic findings to `SHIP-REPORT.md` in the same *What / Why / Fix* format, then restate the final verdict — a semantic critical downgrades the overall verdict to DO NOT SHIP.
+10. **Credentials actually in use:** every password, key and token in the live config differs from the value in the example/sample config and from the service's documented default. The app refuses to start in production if a placeholder remains.
+11. **File and object storage:** no bucket or container is publicly readable; nothing anonymous can **list** its contents. Confirm with a request to the bucket root, not just by reading config.
+12. **Proxy and ingress:** no public route forwards wholesale into a backing service (database, object store, queue, admin UI); routes are narrowed to the paths actually needed.
+13. **Outbound fetches:** if the server fetches URLs supplied by users (import-from-URL, link previews, webhooks, avatars), internal and cloud-metadata addresses are refused — and re-checked after every redirect.
+14. **Header coverage:** security headers apply to the responses that serve HTML, not only to the API.
+15. **Report merge:** append semantic findings to `SHIP-REPORT.md` in the same *What / Why / Fix* format, then restate the final verdict — a semantic critical downgrades the overall verdict to DO NOT SHIP.
 
 ## Verdict rules
 

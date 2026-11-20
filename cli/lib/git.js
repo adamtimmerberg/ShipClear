@@ -86,7 +86,15 @@ export function stagedContent(root, file) {
 
 /**
  * Every line ever *added* across the full history of all branches, so a
- * secret that was committed and later deleted is still found.
+ * secret that was committed and later deleted is still found. Added lines are
+ * grouped per commit+file, which is also how findings are reported.
+ *
+ * The grouping is load-bearing, not tidiness: handing detectors one line at a
+ * time makes any pattern that needs more than one line silently blind in
+ * history. Private key material is exactly that shape — a PEM header is only
+ * a leak when its base64 body follows — so a per-line feed would have found
+ * every leaked key file in the working tree and none in the history, which is
+ * the half that matters once a secret has been deleted.
  * Returns [{ commit, file, text }].
  */
 export function historyAddedLines(root) {
@@ -94,7 +102,8 @@ export function historyAddedLines(root) {
     'log', '--all', '-p', '--unified=0', '--no-color',
     '--pretty=format:@@shipclear-commit@@ %h',
   ]);
-  const added = [];
+  const blocks = new Map();
+  const order = [];
   let commit = null;
   let file = null;
   for (const line of out.split('\n')) {
@@ -105,8 +114,16 @@ export function historyAddedLines(root) {
     } else if (line.startsWith('+++ /dev/null')) {
       file = null;
     } else if (line.startsWith('+') && !line.startsWith('+++') && file) {
-      added.push({ commit, file, text: line.slice(1) });
+      const key = `${commit}\u0000${file}`;
+      if (!blocks.has(key)) {
+        blocks.set(key, { commit, file, lines: [] });
+        order.push(key);
+      }
+      blocks.get(key).lines.push(line.slice(1));
     }
   }
-  return added;
+  return order.map((key) => {
+    const b = blocks.get(key);
+    return { commit: b.commit, file: b.file, text: b.lines.join('\n') };
+  });
 }

@@ -32,6 +32,7 @@ const shipSteps = `## How to run the gate
 1. Run the deterministic scan: \`npx --yes shipclear ship\` (it writes \`SHIP-REPORT.md\` and applies safe fixes automatically).
 2. Read \`SHIP-REPORT.md\` and walk the user through each finding in plain English.
    - **Never run \`shipclear ship --fix-history\` on the user's behalf.** It erases git history. If a finding recommends it, explain what it does, confirm the other findings are fixed first, and let the user run it — or run it only after they explicitly say to.
+   - **Never run \`shipclear ship --probe <url>\` unless the user asks for it and names the address.** It makes real (read-only) requests to a live site. Deciding which site may be contacted is the user's, not yours. You may *tell* them it exists — it confirms findings a file-based scan cannot see, like a storage folder anyone can list — and let them run it.
 3. Perform the semantic checks below yourself — these need code understanding and are your responsibility:
 
 ${semantic}

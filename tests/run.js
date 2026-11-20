@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
@@ -11,6 +12,7 @@ import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
+import { runProbe, normalizeBase } from '../cli/lib/probe.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -89,7 +91,9 @@ console.log('\nprovider vectors');
     ['groq-api-key', 'gsk_' + 'FAKE'.repeat(6)],
     ['xai-api-key', 'xai-' + 'FAKE'.repeat(6)],
     ['azure-account-key', 'AccountKey=' + 'Ab1+'.repeat(11) + '=='],
-    ['private-key-block', '-----BEGIN ' + 'PRIVATE KEY-----'],
+    // Header *plus* a body: a bare header is documentation, and is covered by
+    // its own test below.
+    ['private-key-block', '-----BEGIN ' + 'PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\n-----END PRIVATE KEY-----'],
     ['connection-string', 'postgres://app:' + 'hunter2secret9@db.host/x'],
   ];
   for (const [id, vector] of vectors) {
@@ -104,6 +108,28 @@ console.log('\nprovider vectors');
     findSecrets(srJwt, { includeGeneric: false }).some((h) => h.patternId === 'supabase-service-role'));
   check('ignores supabase anon JWT (public by design)',
     findSecrets(anonJwt, { includeGeneric: false }).length === 0);
+}
+
+// --- unit: a PEM header with no key body is documentation, not a leak ---
+// ShipClear's only finding on a real deployed app was this exact shape — a
+// shell comment in a deploy guide showing where to paste a certificate —
+// reported as CRITICAL twice, the second time recommending git filter-repo
+// and a force-push of rewritten history to erase a comment. A false critical
+// that pushes someone toward rewriting published history is worse than a
+// missed low, so the body requirement applies on the history path too.
+console.log('\nprivate key material needs a body, not just a header');
+{
+  const header = '-----BEGIN ' + 'PRIVATE KEY-----';
+  const comment = `   $EDITOR proxy/certs/origin.key      # ${header}\n   Both files are git-ignored.\n`;
+  check('a bare PEM header in a comment is not a finding',
+    findSecrets(comment, { includeGeneric: false }).length === 0);
+  check('a PEM header followed by key material still is',
+    findSecrets(`${header}\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj\n`,
+      { includeGeneric: false }).some((h) => h.patternId === 'private-key-block'));
+  // One-line JSON/env embedding: the body follows a literal \n escape.
+  check('a PEM embedded in one line (\\n escapes) still is',
+    findSecrets(`{"key": "${header}\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8\\n"}`,
+      { includeGeneric: false }).some((h) => h.patternId === 'private-key-block'));
 }
 
 // --- unit: certificate checking switched off ---
@@ -199,6 +225,218 @@ console.log('\nvulnerable-app (every planted issue must be found)');
     findings.find((f) => f.id === 'gitignore-incomplete')?.resolved === true);
   check('verdict still DO NOT SHIP after safe fixes (criticals remain)',
     verdictOf(findings) === 'DO_NOT_SHIP');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- integration: deployment config (the checks a real deployed app needed) ---
+// Built from a real review of a deployed FastAPI + Next.js + Postgres + MinIO
+// app behind Caddy, where the deterministic scan found none of the two
+// critical, one high and four medium issues a human found. Each assertion
+// below is one of those issues.
+console.log('\ndeployed-app (live config, storage, proxy, debug, headers, SSRF)');
+{
+  const dir = makeRepo('deployed-app');
+  // makeRepo force-adds every file; the live .env in this fixture is
+  // git-ignored, as it should be. Untracking it restores the real shape —
+  // present on disk, invisible to git — which is the whole point of the
+  // credential-in-use check.
+  execFileSync('git', ['rm', '-q', '--cached', '.env'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests',
+    '-c', 'commit.gpgsign=false', 'commit', '-qm', 'untrack .env'], { cwd: dir });
+
+  const { findings } = runGate(dir);
+  const open = findings.filter((f) => !f.resolved);
+  const ids = new Set(open.map((f) => f.id));
+  const find = (id, file) => open.find((f) => f.id === id && (!file || f.file === file));
+  const detailOf = (id, file) => (find(id, file)?.detail || '');
+
+  for (const id of [
+    'credential-in-use-is-public', // .env runs on the example file's value + minioadmin
+    'secret-default-fallback',     // ${POSTGRES_PASSWORD:-recipes-dev-password}
+    'public-bucket',               // mc anonymous set download → anonymous listing
+    'proxy-exposes-service',       // /media/* → minio:9000
+    'debug-route-public',          // /api/metrics with no auth
+    'headers-html-uncovered',      // Caddyfile comments claim a CSP it never sets
+    'ssrf-unchecked-fetch',        // import-from-URL fetches whatever it is given
+  ]) check(`finds ${id}`, ids.has(id), [...ids].join(', '));
+
+  check('verdict is DO NOT SHIP', verdictOf(findings) === 'DO_NOT_SHIP', verdictOf(findings));
+
+  // The property that makes check #1 possible at all: these checks read the
+  // working tree, so an untracked (correctly git-ignored) .env is still seen.
+  const tracked = execFileSync('git', ['ls-files'], { cwd: dir, encoding: 'utf8' });
+  check('.env is NOT tracked in this fixture', !/^\.env$/m.test(tracked), tracked);
+  check('...and the live .env was still read', !!find('credential-in-use-is-public', '.env'));
+
+  check('names the example file the value was copied from',
+    /\.env\.example/.test(detailOf('credential-in-use-is-public', '.env')));
+  check('a documented service default is called out by name',
+    open.some((f) => f.id === 'credential-in-use-is-public' && /minioadmin/.test(f.detail)));
+  // One finding per file, however many of its values are public — the same
+  // rule as history findings: three copies of one explanation read as three
+  // problems. All three of this .env's public values must still be named.
+  const inUse = open.filter((f) => f.id === 'credential-in-use-is-public' && f.file === '.env');
+  check('one finding per config file, not per variable', inUse.length === 1, `${inUse.length}`);
+  check('...and it names every public value in that file',
+    ['POSTGRES_PASSWORD', 'MINIO_ROOT_PASSWORD', 'SECRET_KEY']
+      .every((k) => inUse[0].detail.includes(k)), inUse[0]?.detail);
+  check('a production signal makes an in-use public credential critical',
+    find('credential-in-use-is-public', '.env').severity === 'critical');
+
+  // #2 escalates where the silent fallback is demonstrably the live value.
+  const fallback = open.filter((f) => f.id === 'secret-default-fallback' && f.file === 'docker-compose.yml');
+  check('a compose fallback that IS the value in use is critical',
+    fallback.length >= 1 && fallback.every((f) => f.severity === 'critical'),
+    fallback.map((f) => f.severity).join(', '));
+  check('a settings-class default is caught too (secret_key: str = ...)',
+    !!find('secret-default-fallback', 'backend/config.py'));
+
+  check('the bucket finding is about listing, not just reading',
+    find('public-bucket').listing === true && /list/i.test(detailOf('public-bucket')));
+  check('object storage behind a public route is high, not critical',
+    find('proxy-exposes-service').severity === 'high');
+  check('the proxy finding names the service and the route',
+    /minio/.test(detailOf('proxy-exposes-service')) && /\/media/.test(detailOf('proxy-exposes-service')));
+  check('a catch-all prefix is called out as one',
+    /catch-all|prefix/.test(detailOf('proxy-exposes-service')));
+
+  // --- the false positives this fixture exists to keep quiet ---
+  check('an env-conditional docs route is NOT flagged (the correct pattern)',
+    !open.some((f) => /api\/docs/.test(f.detail || '')), detailOf('debug-route-public'));
+  check('a guarded fetch with no redirects is NOT flagged',
+    !open.some((f) => f.file === 'backend/avatar.py'));
+  check('a guarded fetch that follows redirects IS flagged',
+    !!find('ssrf-unchecked-fetch', 'backend/preview.py'));
+  check('the redirect finding explains the redirect, not a missing check',
+    /redirect/.test(detailOf('ssrf-unchecked-fetch', 'backend/preview.py')));
+  check('a NEXT_PUBLIC_ key is never treated as a secret',
+    !open.some((f) => /NEXT_PUBLIC/.test(f.detail || '')));
+  check('a default *username* alone is not a finding (MINIO_ROOT_USER)',
+    !open.some((f) => /MINIO_ROOT_USER/.test(f.detail || '')));
+  check('a PEM header in a deploy guide is not reported as a leaked key',
+    !open.some((f) => (f.file || '').startsWith('docs/')), open.map((f) => f.file).join(', '));
+
+  // Rotation advice for a containerised database has to say the second half.
+  const md = renderMarkdown({ findings: open, notes: [], verdict: 'DO_NOT_SHIP', version: '0.0.0', semanticSection: false });
+  check('a containerised DB password gets the ALTER USER step too',
+    /ALTER USER/.test(md), 'no ALTER USER guidance in the report');
+  check('every new finding id has an explanation', open.every((f) => !!EXPLAIN[f.id]),
+    open.filter((f) => !EXPLAIN[f.id]).map((f) => f.id).join(', '));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- the deployment checks must not fire on an ordinary clean project ---
+console.log('\ndeployment checks (no false alarms on a plain project)');
+{
+  const dir = makeRepo('clean-app');
+  fs.writeFileSync(path.join(dir, '.env'),
+    'PORT=3000\nOPENAI_API_KEY=sk-' + 'notreal'.repeat(5) + '\n');
+  fs.writeFileSync(path.join(dir, 'docker-compose.yml'),
+    'services:\n  web:\n    image: node:20\n    environment:\n      PORT: 3000\n      DATABASE_URL: ${DATABASE_URL}\n');
+  const { findings } = runGate(dir);
+  const infra = findings.filter((f) => [
+    'credential-in-use-is-public', 'secret-default-fallback', 'public-bucket',
+    'proxy-exposes-service', 'debug-route-public', 'headers-html-uncovered', 'ssrf-unchecked-fetch',
+  ].includes(f.id));
+  check('no deployment findings on a project with ordinary config',
+    infra.length === 0, infra.map((f) => `${f.id}@${f.file}:${f.line}`).join(', '));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- the exact case the spec named for the in-use-credential check ---
+// ".env.example with DB_PASSWORD=devpass plus .env with the same value and
+// NODE_ENV=production → expect one critical."
+console.log('\nin-use credential: the spec\'s own fixture');
+{
+  const dir = makeRepo('clean-app');
+  fs.writeFileSync(path.join(dir, '.env.example'), 'DB_PASSWORD=devpass\n');
+  fs.writeFileSync(path.join(dir, '.env'), 'NODE_ENV=production\nDB_PASSWORD=devpass\n');
+  const { findings } = runGate(dir);
+  const inUse = findings.filter((f) => f.id === 'credential-in-use-is-public');
+  check('exactly one in-use-credential finding', inUse.length === 1, `${inUse.length}`);
+  check('...and it is critical, because NODE_ENV=production', inUse[0]?.severity === 'critical');
+  check('...naming the key and the example file it came from',
+    /DB_PASSWORD/.test(inUse[0]?.detail || '') && /\.env\.example/.test(inUse[0]?.detail || ''),
+    inUse[0]?.detail);
+
+  // Same project, no production signal: the example-file match still reports,
+  // at medium — this is a pre-launch gate, not a deployment monitor.
+  fs.writeFileSync(path.join(dir, '.env'), 'DB_PASSWORD=devpass\n');
+  const relaxed = runGate(dir).findings.filter((f) => f.id === 'credential-in-use-is-public');
+  check('without a production signal it drops to medium, not silence',
+    relaxed.length === 1 && relaxed[0].severity === 'medium',
+    relaxed.map((f) => f.severity).join());
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- the fallback fix text uses the reader's own variable name ---
+console.log('\nfallback fix text names the real variable');
+{
+  const fix = EXPLAIN['secret-default-fallback'].fix({ id: 'secret-default-fallback', key: 'db_password' });
+  check('the compose snippet uses the real key', fix.includes('${DB_PASSWORD:?set DB_PASSWORD in .env}'), fix);
+  check('no placeholder variable survives in the text', !/YOUR_VARIABLE/.test(fix));
+}
+
+// --- a worked example in documentation is not a leaked key ---
+// The body requirement alone still reported a docs page that shows a full
+// example key block; the spec asked for the doc-context suppressions too.
+console.log('\na documented example key is not a leak');
+{
+  const header = '-----BEGIN ' + 'PRIVATE KEY-----';
+  const body = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj';
+  const doc = `Paste your own key here (this file is in .gitignore):\n\n${header}\n${body}\n`;
+  check('an example key block inside instructions is quiet in a doc file',
+    findSecrets(doc, { includeGeneric: false, docFile: true }).length === 0);
+  check('...but the same block in code is still a finding',
+    findSecrets(doc, { includeGeneric: false }).some((h) => h.patternId === 'private-key-block'));
+  const bare = `${header}\n${body}\n`;
+  check('a key block with no instructions around it is a finding even in a doc',
+    findSecrets(bare, { includeGeneric: false, docFile: true }).some((h) => h.patternId === 'private-key-block'));
+}
+
+// --- the fixed shapes must go quiet (verified against the real app) ---
+// Each of these is what the remediation of a real finding actually looks
+// like. A check that still fires after the user has done the right thing
+// teaches them to ignore it.
+console.log('\ndeployment checks go quiet once the problem is fixed');
+{
+  const dir = makeRepo('clean-app');
+  // The MinIO fix: an explicit policy file instead of the `download` shortcut
+  // that silently includes s3:ListBucket.
+  fs.writeFileSync(path.join(dir, 'docker-compose.yml'), [
+    'services:', '  createbuckets:', '    entrypoint: >',
+    '      /bin/sh -c "mc mb --ignore-existing local/recipes &&',
+    '      mc anonymous set-json /tmp/policy.json local/recipes"', ''].join('\n'));
+  // The header fix: the policy lives on the route that serves HTML.
+  fs.writeFileSync(path.join(dir, 'Caddyfile'), [
+    'app.example.com {', '\t# Security headers (CSP is intentionally strict).',
+    '\thandle {', '\t\theader Content-Security-Policy "default-src \'self\'"',
+    '\t\treverse_proxy frontend:3000', '\t}', '}', ''].join('\n'));
+  const { findings } = runGate(dir);
+  check('an explicit bucket policy is not reported as a public bucket',
+    !findings.some((f) => f.id === 'public-bucket'),
+    findings.filter((f) => f.id === 'public-bucket').map((f) => f.detail).join(''));
+  check('a CSP on the HTML route is not reported as uncovered',
+    !findings.some((f) => f.id === 'headers-html-uncovered'),
+    findings.filter((f) => f.id === 'headers-html-uncovered').map((f) => f.detail).join(''));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- one fallback, one finding, however many files read it ---
+console.log('\na fallback written in several files is one finding');
+{
+  const dir = makeRepo('clean-app');
+  for (const f of ['routes/a.js', 'routes/b.js', 'routes/c.js']) {
+    fs.mkdirSync(path.join(dir, 'routes'), { recursive: true });
+    fs.writeFileSync(path.join(dir, f),
+      'const secret = process.env.JWT_SECRET || "insecure-dev-fallback";\n');
+  }
+  const { findings } = runGate(dir);
+  const fallbacks = findings.filter((f) => f.id === 'secret-default-fallback');
+  check('three files reading the same fallback produce one finding',
+    fallbacks.length === 1, `${fallbacks.length} findings`);
+  check('...and it names the other places that need the same change',
+    /2 other places/.test(fallbacks[0]?.detail || ''), fallbacks[0]?.detail);
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -375,6 +613,32 @@ console.log('\nhistory (deleting a secret does not un-leak it)');
   check('working tree itself is clean of secret-in-code',
     !findings.some((f) => f.id === 'secret-in-code'));
   check('verdict is DO NOT SHIP', verdictOf(findings) === 'DO_NOT_SHIP');
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+// --- history is fed per commit+file, not per line ---
+// A PEM header only counts as key material when its base64 body follows, and
+// the history scanner used to hand detectors one added line at a time — which
+// would have found a leaked key file in the working tree and never in the
+// history, the half that still leaks after the file is deleted.
+console.log('\nhistory sees whole files, not single lines');
+{
+  const dir = makeRepo('clean-app');
+  const pem = ['-----BEGIN ' + 'PRIVATE KEY-----',
+    'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj',
+    'MRc9v9LlEeyFvwLrGEKmWGsHZPnQK4rPsbY9kbWgPQxTnFOEaBWGnQkRkJhVkxFV',
+    '-----END PRIVATE KEY-----'].join('\n');
+  fs.writeFileSync(path.join(dir, 'server.key'), pem + '\n');
+  execFileSync('git', ['add', '-A', '-f'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'oops, a key'], { cwd: dir });
+  fs.rmSync(path.join(dir, 'server.key'));
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.email=tests@shipclear.local', '-c', 'user.name=ShipClear Tests', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'remove it'], { cwd: dir });
+
+  const { findings } = runGate(dir);
+  check('a deleted key file is still found in history',
+    findings.some((f) => f.id === 'secret-in-history' && f.file === 'server.key'),
+    findings.map((f) => `${f.id}@${f.file}`).join(', '));
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -636,6 +900,157 @@ console.log('\ntest-account registry');
   check('…and is not mistaken for a committed one',
     !r2.findings.some((f) => f.id === 'test-account'));
   fs.rmSync(dir2, { recursive: true, force: true });
+}
+
+// --- the semantic checklist exists in two places and must agree ---
+// core/gate-checklist.md is canonical (adapters are generated from it); the
+// markdown report carries its own copy for the host AI, and nothing checks
+// that pair automatically — see the invariant in wiki/architecture/overview.
+console.log('\nsemantic checklist stays in sync');
+{
+  const canonical = fs.readFileSync(path.join(here, '../core/gate-checklist.md'), 'utf8');
+  const md = renderMarkdown({ findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0' });
+  const generic = fs.readFileSync(path.join(here, '../adapters/generic/INSTRUCTIONS.md'), 'utf8');
+  for (const topic of ['Credentials actually in use', 'File and object storage',
+    'Proxy and ingress', 'Outbound fetches', 'Header coverage']) {
+    check(`"${topic}" is in the canonical checklist`, canonical.includes(topic));
+    check(`"${topic}" reaches the ship report`, md.includes(topic));
+    check(`"${topic}" reaches the generated adapters`, generic.includes(topic));
+  }
+}
+
+// --- the live probe (no network: the HTTP layer is injected) ---
+// It exists because three of the real app's findings were invisible in source
+// — a bucket policy applied at runtime, a proxy route's behaviour, a missing
+// header. Its constraints are the feature: GET only, one address, opt-in.
+console.log('\nlive probe');
+{
+  // A fake site. Any path not listed answers 404.
+  const site = (routes) => {
+    const seen = [];
+    const request = async (url, method) => {
+      seen.push(`${method} ${url}`);
+      const path = new URL(url).pathname;
+      const r = routes[path];
+      if (!r) return { status: 404, headers: {}, body: 'not found' };
+      return { status: r.status ?? 200, headers: r.headers || {}, body: r.body || '' };
+    };
+    return { request, seen };
+  };
+
+  {
+    const { request, seen } = site({
+      '/': { headers: { 'content-type': 'text/html' }, body: '<html>hi</html>' },
+      '/metrics': { headers: { 'content-type': 'text/plain' }, body: 'http_requests_total 42\n'.repeat(20) },
+      '/media/': { headers: { 'content-type': 'application/xml' }, body: '<ListBucketResult><Key>uploads/private.png</Key></ListBucketResult>' },
+      '/media/minio/health/live': { status: 200, headers: {}, body: '' },
+    });
+    const staticFindings = [{
+      id: 'proxy-exposes-service', severity: 'high', file: 'Caddyfile', line: 7,
+      route: '/media/*', service: 'minio', detail: 'static finding.',
+    }];
+    const { findings, notes } = await runProbe('https://app.example.com', staticFindings, { request });
+
+    check('probe only ever issues GET requests', seen.every((r) => r.startsWith('GET ')), seen.join(', '));
+    check('probe only touches the address it was given',
+      seen.every((r) => r.includes('https://app.example.com/')), seen.join(', '));
+    check('a reachable /metrics is reported', findings.some((f) => f.id === 'debug-route-public' && /metrics/.test(f.detail)));
+    check('a proven-open debug page outranks a suspected one',
+      findings.find((f) => f.id === 'debug-route-public')?.severity === 'high');
+    check('a storage root that returns a file list is critical',
+      findings.some((f) => f.id === 'public-bucket' && f.severity === 'critical' && f.listing));
+    check('the bucket finding quotes what the live site answered',
+      /returned a list of the files/.test(findings.find((f) => f.id === 'public-bucket')?.detail || ''));
+    check('missing page headers on the live root are reported',
+      findings.some((f) => f.id === 'headers-html-uncovered' && /Content-Security-Policy/.test(f.detail)));
+    check('a static proxy finding is confirmed in place, not duplicated',
+      staticFindings[0].probeConfirmed === true
+      && /Confirmed live/.test(staticFindings[0].detail)
+      && !findings.some((f) => f.id === 'proxy-exposes-service'));
+    check('the probe says how many requests it made', notes.some((n) => /read-only requests/.test(n)));
+  }
+
+  // A site that answers 200 for everything would otherwise "fail" every check.
+  {
+    const { request } = site({});
+    const everything = async (url, method) => {
+      const res = await request(url, method);
+      return { status: 200, headers: { 'content-type': 'text/html' }, body: '<html>app</html>' };
+    };
+    const { findings, notes } = await runProbe('https://spa.example.com', [], { request: everything });
+    check('a catch-all 200 site does not produce a finding per path',
+      !findings.some((f) => f.id === 'debug-route-public'),
+      findings.map((f) => f.detail).join(' | '));
+    check('...and the report says why it held back', notes.some((n) => /catch-all/.test(n)));
+  }
+
+  // A protected endpoint is a pass. 401/403/404 must never be a finding.
+  {
+    const { request } = site({
+      '/': { headers: { 'content-security-policy': "default-src 'self'; frame-ancestors 'none'", 'strict-transport-security': 'max-age=31536000', 'x-content-type-options': 'nosniff' } },
+      '/metrics': { status: 401, headers: {}, body: 'unauthorized' },
+      '/api/docs': { status: 404, headers: {}, body: '' },
+    });
+    const { findings, notes } = await runProbe('https://tidy.example.com', [], { request });
+    check('a 401 on a debug page is not a finding', !findings.some((f) => f.id === 'debug-route-public'), findings.map((f) => f.detail).join());
+    check('a CSP with frame-ancestors satisfies the X-Frame-Options check',
+      !findings.some((f) => f.id === 'headers-html-uncovered'), findings.map((f) => f.detail).join());
+    check('a clean probe says the headers are there', notes.some((n) => /does send the headers/.test(n)));
+  }
+
+  // An unreachable address must fail clearly and test nothing.
+  {
+    const request = async () => ({ error: 'getaddrinfo ENOTFOUND nope.example.com' });
+    const { findings, notes, requests } = await runProbe('https://nope.example.com', [], { request });
+    check('an unreachable site produces no findings', findings.length === 0);
+    check('...and says so plainly', notes.some((n) => /could not reach/.test(n)));
+    check('...and stops after the first request', requests === 1, String(requests));
+  }
+
+  check('a non-http address is refused', !!normalizeBase('file:///etc/passwd').error);
+  check('a bare hostname is read as https', normalizeBase('app.example.com').base === 'https://app.example.com');
+  check('a trailing slash is normalized away', normalizeBase('https://app.example.com/').base === 'https://app.example.com');
+
+  // Every probe test above injects a fake HTTP layer, which leaves the real
+  // request path unproven. This one runs the actual code against a throwaway
+  // server on 127.0.0.1 — our own machine, no external traffic.
+  {
+    const server = http.createServer((req, res) => {
+      if (req.url === '/metrics') {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('http_requests_total 1\n'.repeat(40));
+      } else if (req.url === '/') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<html>home</html>');
+      } else {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('nope');
+      }
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const methods = [];
+    server.on('request', (req) => methods.push(req.method));
+
+    const { findings, notes } = await runProbe(`http://127.0.0.1:${port}`, []);
+    check('the real request path finds a reachable /metrics',
+      findings.some((f) => f.id === 'debug-route-public' && /metrics/.test(f.detail)),
+      findings.map((f) => f.detail).join(' | '));
+    check('the real request path reports the missing page headers',
+      findings.some((f) => f.id === 'headers-html-uncovered'));
+    check('the real request path issued nothing but GETs',
+      methods.length > 0 && methods.every((m) => m === 'GET'), methods.join(','));
+    check('the real probe reports how many requests it made',
+      notes.some((n) => /read-only requests to http:\/\/127\.0\.0\.1/.test(n)), notes.join(' | '));
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  // The adapters must not probe a live site on the user's behalf — same class
+  // of decision as rewriting history.
+  for (const rel of ['adapters/generic/INSTRUCTIONS.md', 'adapters/claude-code/commands/safe-to-ship.md']) {
+    const text = fs.readFileSync(path.join(here, '..', rel), 'utf8');
+    check(`${rel} forbids probing unasked`, /Never run `shipclear ship --probe/.test(text));
+  }
 }
 
 // --- the AI adapters must not run the destructive fix unasked ---

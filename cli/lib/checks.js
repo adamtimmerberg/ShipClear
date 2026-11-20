@@ -8,6 +8,7 @@ import {
   personalPaths, TLS_VERIFICATION_OFF, DEBUG_MODE_ON,
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
+import { runInfraChecks } from './infra.js';
 import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
 import { isGitRepo, hasCommits, hasRemote, branchNames, trackedFiles, historyAddedLines } from './git.js';
 
@@ -28,6 +29,9 @@ const isEnvTemplate = (rel) => ENV_TEMPLATE.test(path.posix.basename(rel));
 const isKeyFile = (rel) => KEY_FILE.test(rel);
 const isDataFile = (rel) => DATA_FILE_EXT.has(path.extname(rel).toLowerCase());
 const isDocFile = (rel) => DOC_EXT.has(path.extname(rel).toLowerCase());
+// A database password in a compose/k8s file needs an extra rotation step that
+// fails silently if missed — see containerDbNote in report.js.
+const isContainerConfig = (rel) => /^(?:docker-)?compose(?:[.-].+)?\.ya?ml$|\.ya?ml$/i.test(path.posix.basename(rel));
 
 /**
  * Run the deterministic layer of the gate. Returns { findings, notes, inGit }.
@@ -56,7 +60,7 @@ export function runGate(root, { quick = false } = {}) {
     const content = read(rel);
     if (content === null) continue;
 
-    for (const hit of findSecrets(content, { includeGeneric: !isDocFile(rel) })) {
+    for (const hit of findSecrets(content, { includeGeneric: !isDocFile(rel), docFile: isDocFile(rel) })) {
       seenSecretValues.add(hit.match);
       findings.push({
         id: hit.patternId === 'generic-secret' ? 'generic-secret' : 'secret-in-code',
@@ -64,6 +68,8 @@ export function runGate(root, { quick = false } = {}) {
         file: rel,
         line: lineOfIndex(content, hit.index),
         detail: `${hit.name}: \`${maskSecret(hit.value ?? hit.match)}\``,
+        dbInContainer: isContainerConfig(rel) && /volumes\s*:/.test(content)
+          && /postgres|mysql|mariadb|mongo|redis/i.test(hit.name + hit.match),
       });
     }
 
@@ -226,7 +232,7 @@ export function runGate(root, { quick = false } = {}) {
     const byLocation = new Map();
     for (const { commit, file, text } of historyAddedLines(root)) {
       if (ignored(file)) continue;
-      for (const hit of findSecrets(text, { includeGeneric: false })) {
+      for (const hit of findSecrets(text, { includeGeneric: false, docFile: isDocFile(file) })) {
         if (seen.has(hit.match)) continue;
         seen.add(hit.match);
         // Already reported from the working tree — that finding's advice
@@ -256,6 +262,11 @@ export function runGate(root, { quick = false } = {}) {
       }
     }
   }
+
+  // --- how this project is deployed: live credentials, storage, proxy routes ---
+  // Walks the working tree rather than git's index on purpose — the live
+  // `.env` is the subject of the first of these checks and is never tracked.
+  findings.push(...runInfraChecks(root, { ignored }));
 
   // --- generated test logins exist; the rules promise a launch-time reminder ---
   if (fs.existsSync(path.join(root, '.shipclear', 'test-accounts.json'))) {

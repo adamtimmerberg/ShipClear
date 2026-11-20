@@ -11,11 +11,20 @@ const untrackThenCommit = (file, what) =>
 
 const dbUrlNote = ' (For a database URL, "the service" is wherever your database is hosted — change its password there.)';
 
+// "Change its password there" is incomplete — and silently so — for a
+// database running in a container: POSTGRES_PASSWORD and friends only apply
+// the first time the data volume is created. Change the variable on a
+// database that already has data and the old password keeps working, while
+// the user believes they have rotated it.
+const containerDbNote = (f) => (f.dbInContainer
+  ? ' One more step, and it is easy to miss: changing this variable alone will NOT work if your database already has data — that variable only applies the first time the database is created. Do both: run `ALTER USER <your db user> WITH PASSWORD \'<new password>\';` against the database itself (`docker compose exec db psql -U <your db user>` gets you a prompt), and update the variable so a future rebuild matches. Then restart the services that connect to it.'
+  : '');
+
 const EXPLAIN = {
   'secret-in-code': {
     title: 'A secret key is written directly in your code',
     why: 'Anyone who sees this code — on GitHub, in a screenshot, in your deployed app — can use this key as you, and you get the bill.',
-    fix: 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.' + dbUrlNote,
+    fix: (f) => 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.' + dbUrlNote + containerDbNote(f),
   },
   'secret-in-history': {
     title: 'A secret exists in your git history',
@@ -131,6 +140,53 @@ const EXPLAIN = {
     title: 'Generated test logins exist on this machine',
     why: 'Your AI kept the logins it made for testing in .shipclear/test-accounts.json (git-ignored, so not in the repo). If any of them were ever added to a real database, they are working logins to your live app.',
     fix: 'Before launch: make sure none of these accounts exist in your production database, then delete .shipclear/test-accounts.json. Nothing to do in git — this is about your live app, not the code.',
+  },
+  'credential-in-use-is-public': {
+    title: 'Your app is running on a credential anyone can look up',
+    why: 'This is not a secret written in the wrong place — it is a secret that was never secret. A value copied from your own example file is published in your repo; a service\'s default password is in its documentation. Being "just the default" is the problem: defaults are the first thing anyone tries, by automated scanners, within hours of a domain going live.',
+    fix: (f) => 'Generate a real value and use it in both places. To make one: `openssl rand -base64 36` (Mac/Linux) or, on any machine with Node, `node -e "console.log(require(\'crypto\').randomBytes(27).toString(\'base64\'))"`. Put it in `.env` only — never in the example file — and change it on the service itself too, or they will no longer match. Then stop it coming back: make the app refuse to start when the value is still a placeholder (a one-line check at startup), because that is what turns this from something to remember into something that cannot happen.'
+      + containerDbNote(f),
+  },
+  'secret-default-fallback': {
+    title: 'A missing secret quietly becomes a known one',
+    why: 'If this variable is ever missing — a new server, a typo, a fresh deploy — your app will not fail. It will start up, use this fallback value instead, and look perfectly healthy. That value is written in your code for anyone to read, so the app ends up running on a password that is public, with nothing anywhere saying so.',
+    fix: (f) => {
+      // The reader's own variable name, not a placeholder — same rule as the
+      // file-naming fix texts above.
+      const k = f.key ? f.key.toUpperCase() : 'YOUR_VARIABLE';
+      const lower = f.key || 'your_variable';
+      return `Remove the fallback so a missing value fails loudly instead of quietly. In docker-compose, write \`\${${k}:?set ${k} in .env}\` — the \`:?\` makes the container refuse to start and print that message instead of booting on a known password. In code, read the variable with no default and raise if it is missing: \`os.environ["${k}"]\` in Python rather than \`os.getenv("${k}", "something")\`, or for a settings class \`${lower}: str\` with no \`= "..."\` after it; in JavaScript, \`if (!process.env.${k}) throw new Error("${k} is not set")\`. A crash on the first deploy is a good outcome here; a silent public password is not.`
+        + containerDbNote(f);
+    },
+  },
+  'public-bucket': {
+    title: 'Anyone can read your uploaded files — and list them',
+    why: 'This does not just let someone view one file if they already have the link. It lets anyone ask your storage for a list of every file in it, and then download them all. If your users upload anything personal — photos, screenshots, documents, invoices — it is public right now, and a listing is what turns "nobody knows the URL" into "here is the index".',
+    fix: (f) => (f.listing
+      ? 'Grant permission to read individual objects only, never to list the bucket. For MinIO, replace `mc anonymous set download` with an explicit policy that allows just `s3:GetObject` on `arn:aws:s3:::YOUR-BUCKET/*` and nothing on the bucket itself. For AWS S3, drop `s3:ListBucket` from the policy and turn the public-access block back on. Then check it rather than trusting the config: open your storage path in a browser (for example `https://yourapp.com/media/your-bucket/`) and confirm you do NOT get a list of files. Better still, serve user files through your own app so it can check who is asking.'
+      : 'Confirm you meant this bucket to be world-readable. If it only holds things like public logos, that is fine — but add nothing else to it. If it holds anything a user uploaded, make it private and serve those files through your app, which can check who is asking. Verify by opening the bucket path in a browser window where you are not logged in.'),
+  },
+  'proxy-exposes-service': {
+    title: 'A public web address forwards straight into a backing service',
+    why: 'Everything that service answers is now reachable from the internet, not only the part you meant to share — its own status, admin and API endpoints come along with the route. If that service also uses a default password (very common for databases and storage in a docker-compose setup), it is fully exposed.',
+    fix: (f) => `Narrow the route to the exact paths you need and reject everything else. For \`${f.route || 'that route'}\`, that means allowing only the specific path prefix your pages actually request, blocking the service's own API and admin paths, and allowing only \`GET\` and \`HEAD\` if it is just serving files. Check your work from outside: \`curl -i https://yourapp.com${f.route && f.route !== '/' ? f.route.replace(/[*]$/, '') : '/'}\` for something you expect to work, and a request for the service's own health or admin path to confirm it does not. If nothing in the browser needs this service directly, remove the public route altogether and have your app fetch from it internally.`,
+  },
+  'debug-route-public': {
+    title: 'A debug or monitoring page is open to the public',
+    why: 'These pages exist to tell you what your app is doing — request counts, internal paths, configuration, sometimes environment variables or a memory dump. Handed to a stranger, that is a map of your app and, at worst, your credentials.',
+    fix: 'Either require authentication for this route, or make it exist only outside production. The pattern to copy is a conditional: define the route only when a production flag is off (in FastAPI, `docs_url="/api/docs" if not settings.is_production else None`; in Express, wrap the route in `if (process.env.NODE_ENV !== "production")`). If you need metrics in production, put them behind a login or restrict them to your own network at the proxy. Then confirm with `curl -i https://yourapp.com/<the path above>` — a 401, 403 or 404 is what you want to see.',
+  },
+  'headers-html-uncovered': {
+    // Covers both shapes this finding takes: headers mounted on the API only,
+    // and (when the probe checked the live root) none on the pages at all.
+    title: 'Your safety headers do not cover the pages people load',
+    why: 'These headers protect the pages people load in a browser — they tell the browser what the page is allowed to run. Setting them on your API, which does not run scripts, protects nothing. This one is easy to believe you have handled, because the configuration genuinely exists.',
+    fix: 'Set the headers on the responses that serve your pages, not only on the API: the frontend service, the catch-all proxy route, or your framework\'s middleware for all paths. Then verify from outside rather than from the config: run `curl -I https://yourapp.com/` and check that `content-security-policy` is actually listed in the output (also worth seeing there: `strict-transport-security`, `x-frame-options`, `x-content-type-options`).',
+  },
+  'ssrf-unchecked-fetch': {
+    title: 'Your server will fetch any web address a user gives it',
+    why: 'Your server sits inside your private network, so "fetch this address" also means your database, your file storage, your admin pages — and on a cloud server, the internal address that hands out your cloud credentials. Whatever comes back can end up in whatever the feature shows the user. This is the usual cost of an import-from-URL, link-preview, avatar-from-URL or webhook feature.',
+    fix: 'Before fetching, resolve the address and refuse anything that is not a public internet address. In Python: `ipaddress.ip_address(socket.gethostbyname(host)).is_global` must be true. In Node: resolve with `dns.promises.lookup(host)` and reject private ranges (`10.`, `172.16–31.`, `192.168.`, `127.`, `169.254.`) plus `::1` and `fc00::/7`. Then do the same check again after every redirect, and cap how many you follow (`follow_redirects=False` and handling them yourself is the simplest safe version) — a URL check on its own is stepped around by a redirect, which is the part people miss. Allowing only a short list of domains you expect is even better when the feature can live with it.',
   },
   'env-example-missing': {
     title: 'No .env.example template exists',
@@ -313,6 +369,11 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     out.push('- [ ] **Session and abuse surface:** tokens in httpOnly cookies (not localStorage); rate limiting on login/signup/reset.');
     out.push('- [ ] **Debug surface:** no debug endpoints, stack traces shown to users, or `*` CORS on authenticated APIs.');
     out.push('- [ ] **AI surface** (if the app calls LLMs/agents): prompt inputs treated as untrusted, model output validated before executing/rendering/storing, agent and MCP tools least-privilege.');
+    out.push('- [ ] **Credentials actually in use:** every password, key and token in the live config differs from the value in the example/sample config and from the service\'s documented default; the app refuses to start in production if a placeholder remains.');
+    out.push('- [ ] **File and object storage:** no bucket or container is publicly readable, and nothing anonymous can **list** its contents. Confirm with a request to the bucket root, not just by reading config.');
+    out.push('- [ ] **Proxy and ingress:** no public route forwards wholesale into a backing service (database, object store, queue, admin UI); routes are narrowed to the paths actually needed.');
+    out.push('- [ ] **Outbound fetches:** if the server fetches URLs supplied by users (import-from-URL, link previews, webhooks, avatars), internal and cloud-metadata addresses are refused — and re-checked after every redirect.');
+    out.push('- [ ] **Header coverage:** security headers apply to the responses that serve HTML, not only to the API.');
     out.push('- [ ] **Verdict update:** append any semantic findings here and restate the verdict (a critical one means DO NOT SHIP).');
     out.push('');
     out.push("Running ShipClear without an AI coding tool? Paste this checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to work through the list — or ask a developer friend. These checks matter, but they need something that can read your code to answer them.");
