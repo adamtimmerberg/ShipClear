@@ -1,0 +1,65 @@
+# Publishes to npm from GitHub Actions using npm trusted publishing (OIDC).
+#
+# No token is stored anywhere — not in the repo, not in Actions secrets, not in
+# a developer's ~/.npmrc. The job proves its identity to npm with a short-lived
+# OIDC credential tied to this repository and this workflow file, so the only
+# way to publish shipclear is a run of this file in this repo. That also means
+# there is no long-lived credential to leak, and no one-time password to type.
+#
+# Why this exists: npm is retiring the alternative. 2FA-bypass granular tokens
+# lost sensitive management actions in August 2026 and lose direct publishing in
+# January 2027 (github.blog/changelog/2026-07-08-npm-install-time-security-and-
+# gat-bypass2fa-deprecation). Trusted publishing is the replacement.
+#
+# One-time setup on npmjs.com (package → Settings → Trusted publishing):
+#   provider GitHub Actions · repository adamtimmerberg/ShipClear · workflow
+#   release.yml. Until that exists, this job fails at the publish step with an
+#   auth error and nothing else happens.
+#
+# Deliberately NOT using actions/setup-node's `registry-url`: that writes an
+# .npmrc expecting ${NODE_AUTH_TOKEN}, and an unset token there produces a
+# baffling 404 on publish instead of using OIDC at all.
+name: Release to npm
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC credential trusted publishing authenticates with
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the self-gate's history scan needs full history
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Trusted publishing needs a newer npm than the runner ships with.
+      - run: npm install -g npm@latest
+
+      # The version on npm must be the version this tag marks. A mismatch here
+      # is the whole failure mode this workflow exists to make impossible.
+      - name: Tag and package.json must agree
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "publishing shipclear@$version"
+
+      # Nothing gets published that wouldn't pass its own gate.
+      - run: npm test
+      - run: npm run check:adapters
+      - name: ShipClear clears its own repo
+        run: node cli/bin/shipclear.js ship --no-fix --strict
+
+      - run: npm publish
