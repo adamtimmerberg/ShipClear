@@ -149,6 +149,10 @@ The single exception is opt-in and explicit: `ship --probe <url>` makes read-onl
 
 Honesty is a feature in a security tool. ShipClear does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
 
+## Updates
+
+Build-in-public notes, new checks, and the occasional horror story about what ShipClear caught: **[@ShipClearCode](https://x.com/ShipClearCode)** on X. Watching [releases](https://github.com/adamtimmerberg/ShipClear/releases) works just as well if you'd rather not have an account.
+
 ## Contributing
 
 Detection gaps, better plain-English explanations, and new adapters are all welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). ShipClear runs its own gate in CI on every commit; it will never ask you to ship what it wouldn't.
