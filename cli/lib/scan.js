@@ -35,6 +35,15 @@ export function walkFiles(root) {
   return results;
 }
 
+/**
+ * Whether a path lies inside a directory the walker skips. Exported so the
+ * untracked-file sweep can apply the same rule: a project that hasn't
+ * git-ignored node_modules would otherwise hand the gate every vendored file.
+ */
+export function isSkippedPath(rel) {
+  return rel.split('/').some((segment) => SKIP_DIRS.has(segment));
+}
+
 export function isTextCandidate(rel) {
   return !BINARY_EXT.has(path.extname(rel).toLowerCase());
 }

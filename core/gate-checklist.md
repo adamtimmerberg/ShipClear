@@ -10,6 +10,7 @@ This is the full specification of what `shipclear ship` verifies (deterministic 
 | `secret-in-history` | Secrets present in any past commit, even if deleted since | critical |
 | `env-tracked` | `.env` or other secrets files tracked by git | critical |
 | `key-file-tracked` | Private key material (`.pem`, `id_rsa`, etc.) tracked by git | critical |
+| `key-file-uncommitted` | Private key material present in the project, not tracked and not git-ignored — the next `git add -A` would commit it | high |
 | `env-example-leak` | Real-looking values in `.env.example` | high |
 | `gitignore-incomplete` | `.gitignore` missing `.env` coverage (or missing entirely) | high |
 | `pii-data-file` | Tracked data files (CSV/TSV/SQL/JSONL) containing real-looking emails or SSNs | high |
@@ -28,6 +29,8 @@ This is the full specification of what `shipclear ship` verifies (deterministic 
 | `personal-path` | Absolute paths exposing local usernames (`/home/adam/...`, `C:\Users\...`) | low |
 | `agent-artifact` | AI-session artifacts (local agent settings, transcripts) tracked by git | low |
 | `env-example-missing` | `.env` exists but `.env.example` doesn't | info |
+
+**What the deterministic layer reads.** Content checks judge *what a commit would contain* — files git tracks, plus untracked files git is not ignoring (`git add -A`'s set). Checks that assert something *is committed* (`env-tracked`, `key-file-tracked`, `agent-artifact`) read git's tracked list only, so an untracked file is never described as committed. Deployment checks read the working tree, since the live `.env` is their subject and is correctly never tracked.
 
 ## Semantic layer (performed by the host AI via adapters)
 

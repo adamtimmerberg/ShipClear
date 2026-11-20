@@ -69,6 +69,20 @@ export function trackedFiles(root) {
   return git(root, ['ls-files']).split('\n').filter(Boolean);
 }
 
+/**
+ * Files git is not tracking and not ignoring — exactly what `git add -A`
+ * would add next. The gate has to judge these: the realistic beginner order
+ * is build → `shipclear ship` → `git add -A && commit && push`, so a brand
+ * new file is precisely the one a verdict is asked about.
+ */
+export function untrackedFiles(root) {
+  try {
+    return git(root, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export function stagedFiles(root) {
   return git(root, ['diff', '--cached', '--name-only', '--diff-filter=ACM'])
     .split('\n')

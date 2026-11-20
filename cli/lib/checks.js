@@ -9,8 +9,8 @@ import {
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { runInfraChecks } from './infra.js';
-import { walkFiles, isTextCandidate, readFileSafe } from './scan.js';
-import { isGitRepo, hasCommits, hasRemote, branchNames, trackedFiles, historyAddedLines } from './git.js';
+import { walkFiles, isTextCandidate, isSkippedPath, readFileSafe } from './scan.js';
+import { isGitRepo, hasCommits, hasRemote, branchNames, trackedFiles, untrackedFiles, historyAddedLines } from './git.js';
 
 const ENV_FILE = /^\.env(?:\..+)?$/;
 // Covers .env.example but also .env.local.example, .env.production.sample,
@@ -44,7 +44,29 @@ export function runGate(root, { quick = false } = {}) {
   const ignored = loadIgnore(root);
   const inGit = isGitRepo(root);
 
-  const allFiles = (inGit ? trackedFiles(root) : walkFiles(root)).filter((f) => !ignored(f));
+  // Two lists, deliberately. They answer different questions, and conflating
+  // them is how this gate once handed out a false CLEARED.
+  //
+  // `trackedList` — what git already records. Only this can answer "is a
+  //   secrets file *committed*", which is what env-tracked and friends claim.
+  // `allFiles` — what a commit would contain: tracked, plus untracked files
+  //   git isn't ignoring, i.e. everything `git add -A` would pick up. Content
+  //   checks use this, because the realistic beginner order is build →
+  //   `ship` → `git add -A && commit && push`: a brand-new server.js holding
+  //   a hardcoded key was invisible to every in-code check and the gate said
+  //   CLEARED, which that last command then converted into a real leak.
+  //
+  // Keeping them separate is the whole design: widening one list would have
+  // reported an untracked .env as "your .env is checked into git" — a false
+  // critical, and the reason this fix needed a decision rather than an edit.
+  const trackedList = inGit ? trackedFiles(root).filter((f) => !ignored(f)) : [];
+  const untrackedList = inGit
+    ? untrackedFiles(root).filter((f) => !ignored(f) && !isSkippedPath(f))
+    : [];
+  const uncommitted = new Set(untrackedList);
+  const allFiles = inGit
+    ? [...trackedList, ...untrackedList]
+    : walkFiles(root).filter((f) => !ignored(f));
   if (!inGit) notes.push('Not a git repository — history and tracked-file checks were skipped.');
 
   const read = (rel) => readFileSafe(path.join(root, rel));
@@ -57,6 +79,11 @@ export function runGate(root, { quick = false } = {}) {
   // --- secrets in code (skipping .env files, which are *supposed* to hold them) ---
   for (const rel of allFiles) {
     if (!isTextCandidate(rel) || isEnvFile(rel) || isEnvTemplate(rel) || isKeyFile(rel)) continue;
+    // ShipClear's own store for the test logins the prevention rules tell the
+    // AI to generate. It is *supposed* to contain credentials, exactly as
+    // .env is — finding them there is not a finding. Its dangerous state (a
+    // committed registry) is covered by the tracked-state block below.
+    if (rel.startsWith('.shipclear/')) continue;
     const content = read(rel);
     if (content === null) continue;
 
@@ -68,6 +95,7 @@ export function runGate(root, { quick = false } = {}) {
         file: rel,
         line: lineOfIndex(content, hit.index),
         detail: `${hit.name}: \`${maskSecret(hit.value ?? hit.match)}\``,
+        uncommitted: uncommitted.has(rel),
         dbInContainer: isContainerConfig(rel) && /volumes\s*:/.test(content)
           && /postgres|mysql|mariadb|mongo|redis/i.test(hit.name + hit.match),
       });
@@ -86,6 +114,7 @@ export function runGate(root, { quick = false } = {}) {
             severity: 'high',
             file: rel,
             line: i + 1,
+            uncommitted: uncommitted.has(rel),
             detail: 'A login (username or email) and password pair is written directly in the code.',
           });
         }
@@ -139,8 +168,11 @@ export function runGate(root, { quick = false } = {}) {
   findings.push(...deduped);
 
   // --- tracked files that should never be tracked ---
+  // trackedList, not allFiles: "this is committed" is a claim about git's
+  // index, and an untracked .env reported as committed would be a false
+  // critical pointing at a file that has leaked nothing.
   if (inGit) {
-    for (const rel of allFiles) {
+    for (const rel of trackedList) {
       if (isEnvFile(rel)) {
         findings.push({ id: 'env-tracked', severity: 'critical', file: rel });
       } else if (isKeyFile(rel)) {
@@ -159,6 +191,14 @@ export function runGate(root, { quick = false } = {}) {
         if (artifact) findings.push({ id: 'agent-artifact', severity: 'low', file: rel });
       }
     }
+  }
+
+  // --- not committed yet, but `git add -A` would take it ---
+  // A private key sitting in the project folder has leaked nothing, so this
+  // is not a critical — but it is one command away from being one, and the
+  // .gitignore line that prevents it costs nothing.
+  for (const rel of untrackedList) {
+    if (isKeyFile(rel)) findings.push({ id: 'key-file-uncommitted', severity: 'high', file: rel });
   }
 
   // --- .gitignore hygiene ---
@@ -200,6 +240,7 @@ export function runGate(root, { quick = false } = {}) {
           severity: 'high',
           file: rel,
           line: i + 1,
+          uncommitted: uncommitted.has(rel),
           detail: `\`${m[1]}\` has a real-looking value (\`${maskSecret(value)}\`).`,
         });
       }
@@ -217,7 +258,10 @@ export function runGate(root, { quick = false } = {}) {
       const parts = [];
       if (emails.length >= 3) parts.push(`${emails.length} distinct email addresses`);
       if (ssns.length > 0) parts.push(`${ssns.length} SSN-shaped values`);
-      findings.push({ id: 'pii-data-file', severity: 'high', file: rel, detail: parts.join(' and ') });
+      findings.push({
+        id: 'pii-data-file', severity: 'high', file: rel,
+        uncommitted: uncommitted.has(rel), detail: parts.join(' and '),
+      });
     }
   }
 
@@ -270,7 +314,18 @@ export function runGate(root, { quick = false } = {}) {
 
   // --- generated test logins exist; the rules promise a launch-time reminder ---
   if (fs.existsSync(path.join(root, '.shipclear', 'test-accounts.json'))) {
-    findings.push({ id: 'test-registry-present', severity: 'info', file: '.shipclear/test-accounts.json' });
+    findings.push({
+      id: 'test-registry-present',
+      severity: 'info',
+      file: '.shipclear/test-accounts.json',
+      // Untracked but not ignored: nothing has leaked, but `git add -A` would
+      // commit these logins. Said here rather than as its own finding — the
+      // registry existing is the normal, intended state and must not move the
+      // verdict.
+      detail: uncommitted.has('.shipclear/test-accounts.json')
+        ? 'Also worth one line of housekeeping: git is not ignoring this file, so a `git add -A` would commit it. Add `.shipclear/` to your .gitignore (or run `shipclear setup`, which does it for you).'
+        : undefined,
+    });
   }
 
   // --- .env exists but no template for teammates ---

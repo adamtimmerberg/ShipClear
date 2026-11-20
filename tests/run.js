@@ -592,6 +592,116 @@ console.log('\nclean-app (no false alarms)');
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// --- untracked files: the false CLEARED that outlived four test rounds ---
+// The realistic beginner order is build → `shipclear ship` → `git add -A &&
+// commit && push`. Scanning only git's tracked files meant a brand-new
+// server.js holding a hardcoded key reported CLEARED TO SHIP, and the very
+// next command turned that verdict into a real leak. A false ✅ is this
+// project's worst outcome, so these tests are load-bearing.
+console.log('\nuncommitted files are judged too (the git add -A set)');
+{
+  const commit = (dir, msg) => execFileSync('git', ['-c', 'user.email=tests@shipclear.local',
+    '-c', 'user.name=ShipClear Tests', '-c', 'commit.gpgsign=false', 'commit', '-qm', msg], { cwd: dir });
+  const FAKE_KEY = 'sk-proj-' + 'FAKE'.repeat(10);
+
+  // 1. The repro, exactly as the roadmap described it.
+  {
+    const dir = makeRepo('clean-app');
+    fs.writeFileSync(path.join(dir, 'server.js'), `const apiKey = "${FAKE_KEY}";\n`);
+    const { findings } = runGate(dir);
+    check('a hardcoded key in a never-committed file is found',
+      findings.some((f) => f.id === 'secret-in-code' && f.file === 'server.js'),
+      findings.map((f) => `${f.id}@${f.file}`).join(', '));
+    check('…and the verdict is not CLEARED', verdictOf(findings) === 'DO_NOT_SHIP', verdictOf(findings));
+    // The quick scan promises less, but it must not miss this either.
+    const quick = runGate(dir, { quick: true });
+    check('…and the quick scan catches it too',
+      quick.findings.some((f) => f.id === 'secret-in-code' && f.file === 'server.js'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 2. The design call: an untracked .env must NOT be called committed.
+  //    Widening one file list instead of two would have produced a CRITICAL
+  //    "your .env is checked into git" for a file git has never seen.
+  {
+    const dir = makeRepo('clean-app');
+    fs.rmSync(path.join(dir, '.gitignore')); // nothing ignored at all
+    execFileSync('git', ['rm', '-q', '--cached', '.gitignore'], { cwd: dir });
+    commit(dir, 'drop gitignore');
+    fs.writeFileSync(path.join(dir, '.env'), `OPENAI_API_KEY=${FAKE_KEY}\n`);
+    const { findings } = runGate(dir);
+    check('an untracked .env is never reported as committed',
+      !findings.some((f) => f.id === 'env-tracked'),
+      findings.filter((f) => f.id === 'env-tracked').map((f) => f.file).join());
+    check('…the real finding is the missing .gitignore coverage',
+      findings.some((f) => f.id === 'gitignore-incomplete'));
+    check('…and .env is not scanned for secrets (that is what it is for)',
+      !findings.some((f) => f.id === 'secret-in-code' && f.file === '.env'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 3. No regression: a .env git really does track is still critical.
+  {
+    const dir = makeRepo('clean-app');
+    fs.writeFileSync(path.join(dir, '.env'), 'SECRET=x\n');
+    execFileSync('git', ['add', '-f', '.env'], { cwd: dir });
+    commit(dir, 'commit the env');
+    const { findings } = runGate(dir);
+    check('a tracked .env is still a critical env-tracked finding',
+      findings.some((f) => f.id === 'env-tracked' && f.severity === 'critical'));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 4. A file git is ignoring will not be committed, so it is not judged.
+  {
+    const dir = makeRepo('clean-app');
+    fs.appendFileSync(path.join(dir, '.gitignore'), 'scratch/\n');
+    fs.mkdirSync(path.join(dir, 'scratch'));
+    fs.writeFileSync(path.join(dir, 'scratch', 'notes.js'), `const k = "${FAKE_KEY}";\n`);
+    const { findings } = runGate(dir);
+    check('a git-ignored file is left alone', !findings.some((f) => f.file?.startsWith('scratch/')),
+      findings.map((f) => f.file).join());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 5. A key file one `git add -A` away from history.
+  {
+    const dir = makeRepo('clean-app');
+    fs.writeFileSync(path.join(dir, 'deploy_key.pem'),
+      ['-----BEGIN ' + 'PRIVATE KEY-----', 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj',
+        '-----END PRIVATE KEY-----'].join('\n'));
+    const { findings } = runGate(dir);
+    const f = findings.find((x) => x.id === 'key-file-uncommitted');
+    check('an uncommitted private key file is reported', !!f, findings.map((x) => x.id).join(', '));
+    check('…as high, not critical — nothing has leaked yet', f?.severity === 'high');
+    check('…and not as a committed one', !findings.some((x) => x.id === 'key-file-tracked'));
+    check('…with the exact .gitignore line to add',
+      /deploy_key\.pem/.test(EXPLAIN['key-file-uncommitted'].fix(f)));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 6. An un-ignored node_modules must not drag the whole vendor tree in.
+  {
+    const dir = makeRepo('clean-app');
+    fs.rmSync(path.join(dir, '.gitignore'));
+    fs.mkdirSync(path.join(dir, 'node_modules', 'pkg'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'node_modules', 'pkg', 'index.js'), `const k = "${FAKE_KEY}";\n`);
+    const { findings } = runGate(dir);
+    check('vendored code is skipped even when git is not ignoring it',
+      !findings.some((f) => (f.file || '').startsWith('node_modules/')));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 7. The advice has to match the facts: nothing to rotate if nothing leaked.
+  {
+    const uncommittedFix = EXPLAIN['secret-in-code'].fix({ id: 'secret-in-code', uncommitted: true });
+    const committedFix = EXPLAIN['secret-in-code'].fix({ id: 'secret-in-code' });
+    check('an uncommitted secret is not described as burned', !/burned/.test(uncommittedFix));
+    check('…and says plainly that nothing has leaked', /never been committed/.test(uncommittedFix));
+    check('a committed secret still says rotate it', /rotate the key/.test(committedFix));
+  }
+}
+
 // --- integration: deleted secret still found in history ---
 console.log('\nhistory (deleting a secret does not un-leak it)');
 {

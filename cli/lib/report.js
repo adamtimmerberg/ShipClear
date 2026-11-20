@@ -24,7 +24,17 @@ const EXPLAIN = {
   'secret-in-code': {
     title: 'A secret key is written directly in your code',
     why: 'Anyone who sees this code — on GitHub, in a screenshot, in your deployed app — can use this key as you, and you get the bill.',
-    fix: (f) => 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`. Then rotate the key: log in to the provider and generate a new one, because this one is burned.' + dbUrlNote + containerDbNote(f),
+    fix: (f) => {
+      const move = 'Move the value into your .env file and read it from an environment variable (`process.env.YOUR_KEY_NAME` in JavaScript, `os.environ["YOUR_KEY_NAME"]` in Python). Most frameworks (Next.js, Create React App, Django, Rails, and others) load .env automatically; plain Node.js does not — add `require(\'dotenv\').config()` at the top of your entry file (`npm install dotenv` first), or on Node 20+ run your app with `node --env-file=.env yourapp.js`.';
+      // Rotation advice has to match reality: a file git has never recorded
+      // has leaked nothing, and "this one is burned" about a key that never
+      // left the laptop is the kind of inaccuracy that teaches people to
+      // discount the next instruction.
+      const rotate = f.uncommitted
+        ? ' Good news on the key itself: this file has never been committed, so nothing has leaked and you do not need to rotate it — fixing it now means it never does. (If the value has been in a screenshot, a chat, or a paste anywhere, rotate anyway — it is free.)'
+        : ' Then rotate the key: log in to the provider and generate a new one, because this one is burned.';
+      return move + rotate + dbUrlNote + containerDbNote(f);
+    },
   },
   'secret-in-history': {
     title: 'A secret exists in your git history',
@@ -85,6 +95,11 @@ const EXPLAIN = {
     title: 'A private key file is checked into git',
     why: 'Private key files (.pem, id_rsa and friends) are the literal keys to servers and services. Anyone with the repo can log in as you.',
     fix: (f) => `${untrackThenCommit(f.file || '<file>', 'key file')} Add its name (\`${f.file || '<file>'}\`) on its own line in .gitignore so it can't be re-added. Then replace the key itself: go back to wherever it came from (AWS, Firebase, your hosting provider, an SSH keygen) and create a new one — the committed one can never be trusted again, even after it's untracked.`,
+  },
+  'key-file-uncommitted': {
+    title: 'A private key file is sitting in your project with nothing stopping git taking it',
+    why: 'Private key files (.pem, id_rsa and friends) are the literal keys to servers and services. This one is not in git yet, so nothing has leaked — but nothing is preventing it either. The next `git add -A` sweeps it in, and once a key is in your history it is there in every future clone of the repo.',
+    fix: (f) => `Add \`${f.file || '<file>'}\` on its own line in your .gitignore. That single line is the entire fix and it works immediately — the file stays exactly where it is on disk and your app keeps working; git simply stops offering to commit it. Check it worked: run \`git status --short\` and confirm \`${f.file || '<file>'}\` no longer appears. (If you also have a folder of certificates, ignoring the folder — \`certs/\` — is tidier than listing each file.)`,
   },
   'env-example-leak': {
     title: '.env.example contains a real-looking value',
