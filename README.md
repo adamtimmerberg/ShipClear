@@ -51,6 +51,25 @@ That runs the full gate and gives you a verdict:
 
 Every finding answers three questions in plain English: **what is this, why does it matter, what do I do.** Safe fixes are applied for you. No security background needed.
 
+## Commands
+
+Everything is one word plus, occasionally, one flag. `shipclear --help` prints this same list in your terminal.
+
+| Command | What it does |
+|---|---|
+| `npx shipclear setup` | Prepares the project once: creates `.env` and a safe-to-share `.env.example`, adds `.env` to `.gitignore`, installs a commit guard that blocks secrets from ever being committed. |
+| `npx shipclear scan` | Quick look for secrets in your current files. Fast, partial — it skips git history and dependencies, and says so. |
+| `npx shipclear scan --staged` | Scans only what you're about to commit. This is what the commit guard runs; you rarely type it. |
+| `npx shipclear ship` | **The one that matters.** The full gate: every check below, safe fixes applied for you, `SHIP-REPORT.md` written, and one verdict — cleared to ship, or not. |
+| `npx shipclear ship --no-fix` | Same, but changes nothing — judges the project exactly as it stands. |
+| `npx shipclear ship --strict` | Same, but any finding at all fails (exit 1). For CI and the badge, where "ship with fixes" can't count as a pass. |
+| `npx shipclear ship --probe https://your-app.com` | Also asks your deployed site what is actually reachable. Read-only, confirms with you first — see [below](#checking-the-site-you-actually-deployed). |
+| `npx shipclear ship --fix-history` | Erases git history to remove a leaked secret from old commits. Only for repos never pushed anywhere, refuses if it would lose any work, and never run for you by an AI assistant. |
+| `npx shipclear badge` | Adds the self-updating ["cleared to ship" badge](#the-badge-cant-lie) to your README. |
+| `npx shipclear --version` | Prints the version you're running. |
+
+Stuck on something a report told you? [Plain-English troubleshooting and glossary](docs/troubleshooting.md).
+
 ## Three layers, not just a scanner
 
 Most tools scan your app *after* you've made the mistake. ShipClear rides along the whole time:
@@ -78,13 +97,15 @@ Full walkthroughs: [docs/quickstart.md](docs/quickstart.md). Stuck on anything? 
 
 ## What the gate checks
 
-Secrets in your code **and in your entire git history** (deleting a key doesn't un-leak it) · committed `.env` and private key files · real-looking values in `.env.example` · `.gitignore` coverage · personal data (emails, SSNs) in tracked data files · hardcoded login accounts · known-vulnerable dependencies · your local paths and AI-session artifacts leaking into the repo.
+**In your code and git history:** secrets in your code **and in every past commit** (deleting a key doesn't un-leak it) · committed `.env` and private key files · real-looking values in `.env.example` · `.gitignore` coverage · personal data (emails, SSNs) in tracked data files · hardcoded login accounts · known-vulnerable dependencies · debug mode left on · certificate checking switched off · your local paths and AI-session artifacts leaking into the repo.
+
+**In the config you deploy with** — the part that is still risky when the code is clean: a password that is still your `.env.example`'s value or the service's documented default (`minioadmin`, `postgres`, `change-me…`) · a missing variable that silently falls back to a known one (`${POSTGRES_PASSWORD:-dev-password}`) · storage anyone can read **or list** · a public route that forwards straight into your database, queue or object store · `/metrics`, `/actuator/env` and friends with no login · security headers set on your API but not on the pages a browser loads · a server that will fetch any web address a user hands it.
 
 Provider keys covered: AWS, Anthropic, OpenAI, OpenRouter, Groq, xAI, Hugging Face, Stripe, GitHub, Google, Slack, SendGrid, npm, DigitalOcean, Azure, private keys, database URLs with real passwords — and Supabase JWTs done right: service-role keys are flagged, anon keys (public by design) are left alone.
 
 Detection is tuned against real-world starter repos, with a false-positive regression test for every fix. And if you have `gitleaks` or `osv-scanner` installed, ShipClear automatically uses them for extra depth — it just never *requires* them.
 
-Plus a ten-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, and an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools).
+Plus a fifteen-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools), and — confirmed by asking, not by reading config — whether your live credentials differ from the published ones, whether anything can list your buckets, whether a proxy route exposes a backing service, whether user-supplied URLs are fetched safely, and whether your HTML responses carry the headers your API does.
 
 ## The badge can't lie
 

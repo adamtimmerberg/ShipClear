@@ -1067,6 +1067,36 @@ console.log('\nadapters');
     /Never run `shipclear ship --fix-history` on the user's behalf/.test(generic));
 }
 
+// --- help must document every command and flag the CLI actually accepts ---
+// `--version` worked for three releases while being absent from `--help`, and
+// the README had no command list at all — someone browsing GitHub could not
+// see what the tool does without installing it. Three places, kept in step.
+console.log('\nhelp, the CLI and the README agree on what exists');
+{
+  const binSrc = fs.readFileSync(path.join(here, '../cli/bin/shipclear.js'), 'utf8');
+  const readme = fs.readFileSync(path.join(here, '../README.md'), 'utf8');
+  const help = binSrc.split('const HELP = `')[1].split('`;')[0];
+
+  const commands = [...binSrc.matchAll(/^\s+case '([a-z][a-z-]*)':/gm)].map((m) => m[1]);
+  check('found the command list in the router', commands.length >= 4, commands.join(', '));
+  for (const c of commands) {
+    check(`--help documents \`${c}\``, help.includes(`shipclear ${c}`));
+    check(`README documents \`${c}\``, readme.includes(`shipclear ${c}`));
+  }
+
+  // Flags the router actually reads. --quiet is deliberately undocumented:
+  // it exists for the generated commit hook, not for people.
+  const flags = new Set([
+    ...[...binSrc.matchAll(/args\.includes\('(--[a-z-]+)'\)/g)].map((m) => m[1]),
+    ...[...binSrc.matchAll(/flagValue\(args, '(--[a-z-]+)'\)/g)].map((m) => m[1]),
+  ]);
+  flags.delete('--quiet');
+  check('found the flag list in the router', flags.size >= 5, [...flags].join(' '));
+  for (const f of flags) check(`--help documents ${f}`, help.includes(f), [...flags].join(' '));
+
+  check('--help documents --version, which has always worked', help.includes('--version'));
+}
+
 // --- CLI smoke test ---
 console.log('\ncli');
 {

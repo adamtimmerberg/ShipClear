@@ -42,6 +42,7 @@ Usage:
                            README, backed by a GitHub Actions run of this gate on
                            every push — so it turns red if an unchecked or failing
                            commit lands
+  shipclear --version      Print the version you're running
 
 Everything runs locally and nothing is ever uploaded. The one exception is
 opt-in: --probe makes read-only requests to the single address you give it.
