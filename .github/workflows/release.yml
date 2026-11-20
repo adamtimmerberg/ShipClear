@@ -40,10 +40,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
-      # Trusted publishing needs a newer npm than the runner ships with.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm >= 11.5.1; Node 22 still bundles 10.x.
+      # Pinned to the 11 line rather than @latest on purpose: npm 12 requires
+      # Node ^22.22.2 || ^24.15.0 || >=26, so `npm@latest` silently couples this
+      # job to whatever Node floor npm adopts next — it already broke here once
+      # that way. npm 11.x runs on any Node 22 and clears the OIDC floor.
+      - run: npm install -g npm@^11.5.1
+      - run: node --version && npm --version
 
       # The version on npm must be the version this tag marks. A mismatch here
       # is the whole failure mode this workflow exists to make impossible.
