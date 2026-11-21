@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import {
   findSecrets, looksPlaceholder, entropy, maskSecret, lineOfIndex,
   realLookingEmails, SSN, PASSWORD_ASSIGNMENT, SUSPICIOUS_ACCOUNT_EMAIL,
-  personalPaths, TLS_VERIFICATION_OFF, DEBUG_MODE_ON,
+  personalPaths, TLS_VERIFICATION_OFF, DEBUG_MODE_ON, isSecretishKey,
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
 import { runInfraChecks } from './infra.js';
@@ -144,13 +144,24 @@ export function runGate(root, { quick = false } = {}) {
         });
       }
 
-      for (const hit of personalPaths(content)) {
+      // One finding per file, not per occurrence. This rule matches a string
+      // that recurs — a path baked into a lockfile or a generated bundle can
+      // appear thousands of times in one file, and emitting each hit once
+      // turned a single real run into 33,569 findings and a 14.5 MB report,
+      // because every one of them repeats the full remediation prose. The
+      // actionable unit is the file, so report the file and count the rest.
+      const pathHits = personalPaths(content);
+      if (pathHits.length) {
+        const unique = [...new Set(pathHits.map((h) => h.match))];
+        const shown = unique.slice(0, 3).map((u) => `\`${u}\``).join(', ');
+        const more = unique.length > 3 ? `, and ${unique.length - 3} more` : '';
         findings.push({
           id: 'personal-path',
           severity: 'low',
           file: rel,
-          line: lineOfIndex(content, hit.index),
-          detail: `\`${hit.match}\``,
+          line: lineOfIndex(content, pathHits[0].index),
+          detail: shown + more
+            + (pathHits.length > unique.length ? ` (${pathHits.length} occurrences)` : ''),
         });
       }
     }
@@ -227,6 +238,15 @@ export function runGate(root, { quick = false } = {}) {
       const value = m[2].trim();
       if (!value || looksPlaceholder(value)) return;
       const specific = findSecrets(value, { includeGeneric: false }).length > 0;
+      // Entropy alone cannot tell a secret from any other dense string, so it
+      // only gets a vote when the *name* claims a credential. Without this the
+      // check reported `SEED_SUPERADMIN_EMAIL=someone@gmail.com`,
+      // `RP_ID=app.example.com`, `DB_PATH=/home/you/app/data.db` and
+      // `TERMINAL_IMAGE=nikolaik/python-nodejs:python3.11` as leaked secrets —
+      // four HIGH findings in one real run, none of them a credential.
+      // A specific pattern match (a live `sk-ant-…`, an AWS key) still stands
+      // on its own, whatever the variable is called.
+      if (!specific && !isSecretishKey(m[1])) return;
       // Values the specific patterns already cleared don't get a second
       // chance via entropy: scheme:// URLs (a connection string with a real
       // password would have matched; without one it's a template) and JWTs

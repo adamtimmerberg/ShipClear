@@ -13,6 +13,8 @@ import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
 import { runProbe, normalizeBase } from '../cli/lib/probe.js';
+import { runInfraChecks } from '../cli/lib/infra.js';
+import { isSkippedPath } from '../cli/lib/scan.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -55,6 +57,9 @@ function makeRepo(fixture) {
 // exists in this file — otherwise ShipClear's own gate would (correctly!)
 // flag it.
 const FAKE_ANTHROPIC_KEY = 'sk-ant-' + 'FAKE12345678901234567890123456';
+// Same reason, for the personal-path rule: a literal `/home/<name>` in this
+// file is a finding against ShipClear's own repo.
+const HOME = '/ho' + 'me';
 
 // --- unit: pattern behavior ---
 console.log('\npatterns');
@@ -1455,6 +1460,155 @@ console.log('\nbadge');
     const out = renderTerminal({ findings: [], notes: [], verdict: 'CLEARED', version: '0.0.0', quick: true });
     return !/badge/i.test(out);
   })());
+}
+
+// --- scan scope: a home directory is not a project ---
+//
+// A real run from `$HOME` produced 34,330 findings, 99.4% of them from
+// `.cache`, `.claude` and `.hermes`. These guard both halves of the fix: the
+// caches go at any depth, the home-state directories only at the scan root —
+// because a project that has committed its own `.ssh/id_rsa` is exactly what
+// this tool exists to catch.
+console.log('\nscan scope');
+{
+  check('a package cache is skipped at the scan root', isSkippedPath('.cache/uv/pkg/mod.py'));
+  check('a package cache is skipped when nested', isSkippedPath('deps/.cache/pkg/mod.py'));
+  check('vendored site-packages is skipped when nested', isSkippedPath('backend/site-packages/x.py'));
+  check('another tool\'s state is skipped at the scan root', isSkippedPath('.claude/projects/a.jsonl'));
+  check('.ssh at the scan root is skipped', isSkippedPath('.ssh/id_ed25519'));
+  check('a project\'s own committed .ssh is NOT skipped', !isSkippedPath('myapp/.ssh/id_rsa'));
+  check('a project\'s own committed .docker config is NOT skipped', !isSkippedPath('myapp/.docker/config.json'));
+  check('ordinary source is not skipped', !isSkippedPath('src/app/api/route.ts'));
+}
+
+// --- infra regressions: flagging the mitigation is worse than silence ---
+console.log('\ninfra false positives');
+{
+  const infraDir = (files) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-infra-'));
+    for (const [rel, body] of Object.entries(files)) {
+      const abs = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, body);
+    }
+    return dir;
+  };
+  const ids = (dir, id) => runInfraChecks(dir).filter((f) => f.id === id);
+
+  // `respond 404` is Caddy's idiomatic way to hide a path, and the report's
+  // own fix text tells the user a 404 is what they want to see.
+  const denied = infraDir({
+    Caddyfile: 'example.com {\n\thandle /api/metrics {\n\t\trespond 404\n\t}\n}\n',
+  });
+  check('a proxy route closed with respond 404 is not an open debug page',
+    ids(denied, 'debug-route-public').length === 0);
+
+  const denied403 = infraDir({
+    Caddyfile: 'example.com {\n\thandle /api/metrics {\n\t\trespond 403\n\t}\n}\n',
+  });
+  check('respond 403 still counts as closed', ids(denied403, 'debug-route-public').length === 0);
+
+  const openMetrics = infraDir({
+    Caddyfile: 'example.com {\n\thandle /api/metrics {\n\t\treverse_proxy app:8000\n\t}\n}\n',
+  });
+  check('a genuinely open metrics route is still reported',
+    ids(openMetrics, 'debug-route-public').length === 1);
+
+  // A named matcher pinned to GET/HEAD on an anchored path regexp is a
+  // scoped allowlist, not "minio is on the internet".
+  const scoped = infraDir({
+    Caddyfile: 'example.com {\n\t@media_object {\n\t\tmethod GET HEAD\n'
+      + '\t\tpath_regexp ^/media/[a-z]+/hero/[0-9a-f]+\\.(jpg|png)$\n\t}\n'
+      + '\thandle @media_object {\n\t\treverse_proxy minio:9000\n\t}\n'
+      + '\thandle /media/* {\n\t\trespond 404\n\t}\n}\n',
+  });
+  check('a scoped GET-only allowlist to an object store is not an exposed service',
+    ids(scoped, 'proxy-exposes-service').length === 0);
+
+  const wideMatcher = infraDir({
+    Caddyfile: 'example.com {\n\t@wide {\n\t\tpath /files/*\n\t}\n'
+      + '\thandle @wide {\n\t\treverse_proxy minio:9000\n\t}\n}\n',
+  });
+  const wide = ids(wideMatcher, 'proxy-exposes-service');
+  check('a prefix-wildcard matcher is still an exposed service', wide.length === 1);
+  check('the finding names the matcher\'s real path, not the @token',
+    wide.length === 1 && wide[0].detail.includes('/files/*') && !wide[0].detail.includes('@wide'));
+
+  const getOnlyWide = infraDir({
+    Caddyfile: 'example.com {\n\t@g {\n\t\tmethod GET\n\t\tpath /any/*\n\t}\n'
+      + '\thandle @g {\n\t\treverse_proxy minio:9000\n\t}\n}\n',
+  });
+  check('GET-only over a wildcard path is still exposed — both halves are required',
+    ids(getOnlyWide, 'proxy-exposes-service').length === 1);
+
+  const db = infraDir({
+    Caddyfile: 'example.com {\n\thandle /db/* {\n\t\treverse_proxy postgres:5432\n\t}\n}\n',
+  });
+  check('a database behind a catch-all prefix is still critical',
+    ids(db, 'proxy-exposes-service').some((f) => f.severity === 'critical'));
+
+  // The auth that covers a mount point lives in the mounted file.
+  const mounted = infraDir({
+    'server.js': "const metricsRouter = require('./routes/metrics');\napp.use('/api/metrics', metricsRouter);\n",
+    'routes/metrics.js': "const { requireAuth } = require('./auth');\nconst router = express.Router();\nrouter.use(requireAuth);\nrouter.get('/current', h);\nmodule.exports = router;\n",
+  });
+  check('a mounted router guarded by router.use(requireAuth) is not an open debug page',
+    ids(mounted, 'debug-route-public').length === 0);
+
+  const mountedOpen = infraDir({
+    'server.js': "const metricsRouter = require('./routes/metrics');\napp.use('/api/metrics', metricsRouter);\n",
+    'routes/metrics.js': "const router = express.Router();\nrouter.get('/current', h);\nmodule.exports = router;\n",
+  });
+  check('a mounted router with no auth anywhere is still reported',
+    ids(mountedOpen, 'debug-route-public').length === 1);
+}
+
+// --- .env.example: entropy alone cannot tell a secret from a hostname ---
+console.log('\nenv-example key names');
+{
+  const envRepo = (body) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-env-'));
+    fs.writeFileSync(path.join(dir, '.env.example'), body);
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n.env.*\n');
+    const git = (...a) => execFileSync('git', ['-c', 'user.email=t@shipclear.local',
+      '-c', 'user.name=T', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, stdio: 'ignore' });
+    git('init', '-q', '-b', 'main'); git('add', '-A', '-f'); git('commit', '-q', '-m', 'f');
+    return runGate(dir, { quick: false }).findings.filter((f) => f.id === 'env-example-leak');
+  };
+
+  check('a seed admin email is not a leaked secret',
+    envRepo('SEED_SUPERADMIN_EMAIL=someone.real@gmail.com\n').length === 0);
+  check('a WebAuthn relying-party hostname is not a leaked secret',
+    envRepo('RP_ID=app.example-site.com\n').length === 0);
+  check('a local database path is not a leaked secret',
+    envRepo(`DB_PATH=${HOME}/someone/dashboard/data/metrics.db\n`).length === 0);
+  check('a docker image reference is not a leaked secret',
+    envRepo('TERMINAL_MODAL_IMAGE=nikolaik/python-nodejs:python3.11-nodejs20\n').length === 0);
+  check('a high-entropy value under a secret-shaped name is still reported',
+    envRepo('JWT_SECRET=8f3kD9sLqZ2mXp7vTbN4wR6yH1jG5cA0\n').length === 1);
+  check('a recognised provider key is reported whatever the variable is called',
+    envRepo(`HARMLESS_LOOKING_NAME=${FAKE_ANTHROPIC_KEY}\n`).length === 1);
+}
+
+// --- personal-path: the actionable unit is the file, not the occurrence ---
+console.log('\npersonal-path volume');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-paths-'));
+  const many = Array.from({ length: 400 }, (_, i) => `const p${i} = "${HOME}/someone/app/x";`).join('\n');
+  fs.writeFileSync(path.join(dir, 'bundle.js'), many);
+  // The rule matches `/home/<user>`, not the full path, so repeated lines in
+  // one file collapse to a single distinct match — hence the count.
+  fs.writeFileSync(path.join(dir, 'cfg.py'), `a = "${HOME}/someone/one"\nb = "${HOME}/someone/two"\n`);
+  fs.writeFileSync(path.join(dir, 'one.py'), `a = "${HOME}/solo/app"\n`);
+  const git = (...a) => execFileSync('git', ['-c', 'user.email=t@shipclear.local',
+    '-c', 'user.name=T', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, stdio: 'ignore' });
+  git('init', '-q', '-b', 'main'); git('add', '-A', '-f'); git('commit', '-q', '-m', 'f');
+  const found = runGate(dir, { quick: false }).findings.filter((f) => f.id === 'personal-path');
+  check('one personal-path finding per file, not per occurrence', found.length === 3);
+  check('the occurrence count is still reported',
+    found.some((f) => f.file === 'bundle.js' && /400 occurrences/.test(f.detail)));
+  check('a file with a single hit carries no occurrence count',
+    found.some((f) => f.file === 'one.py' && !/occurrences/.test(f.detail)));
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);

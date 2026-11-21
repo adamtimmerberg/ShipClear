@@ -354,6 +354,90 @@ function publicStorage(files, read, findings) {
   }
 }
 
+/**
+ * Caddy named matchers. `handle @media_object { reverse_proxy minio:9000 }`
+ * names a matcher defined elsewhere in the file:
+ *
+ *     @media_object {
+ *         method GET HEAD
+ *         path_regexp ^/media/[a-z]+/hero/[0-9a-f]+\.(jpg|png)$
+ *         expression {http.request.uri.query} == ""
+ *     }
+ *
+ * Two bugs lived in not reading it. The route was reported as the literal
+ * token `@media_object`, which produced the nonsense advice
+ * `curl -i https://yourapp.com@media_object`; and the constraints inside the
+ * block — the whole reason the route is safe — were invisible, so a narrowly
+ * scoped allowlist was reported identically to `handle /* { reverse_proxy }`.
+ */
+function resolveCaddyMatcher(lines, name) {
+  const start = lines.findIndex((l) => new RegExp('^\\s*' + name + '\\s*\\{').test(l));
+  if (start === -1) return null;
+  const paths = [];
+  const methods = [];
+  let exact = false;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\s*\}/.test(lines[i])) break;
+    const pr = lines[i].match(/^\s*path_regexp\s+(?:\S+\s+)?(\S+)/);
+    if (pr) { paths.push(pr[1]); if (/\$$/.test(pr[1])) exact = true; continue; }
+    const pa = lines[i].match(/^\s*path\s+(.+)$/);
+    if (pa) {
+      const ps = pa[1].trim().split(/\s+/);
+      paths.push(...ps);
+      if (ps.every((x) => !x.includes('*'))) exact = true;
+      continue;
+    }
+    const me = lines[i].match(/^\s*method\s+(.+)$/);
+    if (me) methods.push(...me[1].trim().toUpperCase().split(/\s+/));
+  }
+  return { paths, methods, exact };
+}
+
+/**
+ * Whether a matcher is narrow enough that the upstream is not meaningfully
+ * exposed: the path is pinned (an anchored regexp or a literal, not a prefix
+ * wildcard) *and* the verbs are read-only. Both halves are required — a
+ * pinned path with no method limit still allows writes, and `method GET` over
+ * `path /*` still hands over the whole service.
+ */
+function isScopedMatcher(matcher) {
+  if (!matcher || !matcher.paths.length || !matcher.methods.length) return false;
+  const readOnly = matcher.methods.every((m) => m === 'GET' || m === 'HEAD');
+  return matcher.exact && readOnly;
+}
+
+/**
+ * `app.use('/api/metrics', metricsRouter)` is a mount point, not an endpoint:
+ * the `router.use(requireAuth)` that protects every route under it lives in
+ * the mounted file, which a four-line window around this line cannot see.
+ * Resolve the import and look there instead of calling the route unprotected.
+ */
+function mountedRouterIsProtected(text, content, rel, read) {
+  const mount = text.match(/\.(?:use|all)\(\s*['"][^'"]+['"]\s*,\s*([A-Za-z_$][\w$]*)\s*\)/);
+  if (!mount) return false;
+  const ident = mount[1];
+  const spec = content.match(
+    new RegExp('(?:const|let|var)\\s+' + ident + '\\s*=\\s*require\\(\\s*[\'"]([^\'"]+)'
+      + '|import\\s+' + ident + '\\s+from\\s*[\'"]([^\'"]+)')
+  );
+  if (!spec) return false;
+  const target = spec[1] || spec[2];
+  if (!target || !target.startsWith('.')) return false;
+  const dir = rel.split('/').slice(0, -1).join('/');
+  const joined = path.posix.normalize(path.posix.join(dir, target));
+  for (const cand of [joined, joined + '.js', joined + '.cjs', joined + '.mjs',
+    joined + '.ts', joined + '/index.js', joined + '/index.ts']) {
+    const body = read(cand);
+    if (body === null || body === undefined || body === '') continue;
+    // Router-level middleware applied before any route protects them all.
+    if (/\b(?:router|app)\.use\(\s*[A-Za-z_$][\w$.]*\s*\)/.test(body) && AUTH_NEARBY.test(body)) {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // #4 A public route that forwards into a backing service
 // ---------------------------------------------------------------------------
@@ -386,6 +470,13 @@ function proxyTopology(files, read, findings) {
         if (name) candidates.push([name[1].toLowerCase(), num ? Number(num[1]) : 0]);
       }
 
+      // A `handle @name` block carries its constraints in the matcher
+      // definition, not on this line. Read them: they decide both what the
+      // route is called in the report and whether it is exposed at all.
+      const matcher = route && route.startsWith('@') ? resolveCaddyMatcher(lines, route) : null;
+      if (matcher && isScopedMatcher(matcher)) return;
+      const displayRoute = matcher && matcher.paths.length ? matcher.paths[0] : route;
+
       for (const [host, port] of candidates) {
         const service = Object.keys(BACKING_SERVICES).find((s) => host === s || host.includes(s))
           || BACKING_PORTS[port];
@@ -397,11 +488,11 @@ function proxyTopology(files, read, findings) {
           severity: BACKING_SERVICES[service],
           file: rel,
           line: i + 1,
-          detail: `the public route \`${route || '/'}\` forwards to \`${host}${port ? ':' + port : ''}\` (${service})`
-            + (isBroadPrefix(route) ? ' — and it is a catch-all prefix, so that service\'s own admin and API endpoints are reachable too' : '')
+          detail: `the public route \`${displayRoute || '/'}\` forwards to \`${host}${port ? ':' + port : ''}\` (${service})`
+            + (isBroadPrefix(displayRoute) ? ' — and it is a catch-all prefix, so that service\'s own admin and API endpoints are reachable too' : '')
             + '.',
           service,
-          route: route || '/',
+          route: displayRoute || '/',
         });
       }
     });
@@ -448,7 +539,9 @@ function openDebugRoutes(files, read, findings) {
       let m;
       while ((m = ROUTE_DEFINITION.exec(text))) {
         const route = m[1] || m[2] || m[3] || m[4];
-        if (route && route.startsWith('/')) consider(route, i);
+        if (!route || !route.startsWith('/')) continue;
+        if (!proxy && mountedRouterIsProtected(text, content, rel, read)) continue;
+        consider(route, i);
       }
       if (proxy) {
         const r = text.match(PROXY_ROUTE_LINE);

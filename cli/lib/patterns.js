@@ -269,7 +269,7 @@ export function personalPaths(content) {
 const SECRET_KEY_NAME = /pass(?:word|wd)?|pword|pwd|secret|token|credential|private|_key$|^api[_-]?key$|^access[_-]?key$/i;
 // Names that match the above but are public by design, or hold something
 // that isn't the credential itself (a path, a length, an algorithm).
-const NOT_SECRET_KEY_NAME = /^(?:NEXT_PUBLIC|VITE|REACT_APP|NUXT_PUBLIC|EXPO_PUBLIC|PUBLIC)_|(?:PUBLIC|PUBLISHABLE|ANON|SITE)_KEY$|_KEY_(?:FILE|PATH|ID)$|_KEYFILE$|_(?:URL|URI|HOST|PORT|ID|NAME|USER|USERNAME|ALGORITHM|ALGO|LENGTH|SIZE|EXPIRE|EXPIRES|EXPIRY|TTL|DAYS|HOURS|MINUTES|SECONDS|ROUNDS|ENABLED|REQUIRED|PROVIDER|TYPE|REGION|BUCKET|ISSUER|AUDIENCE|HEADER|COOKIE|PREFIX|VERSION)$/i;
+const NOT_SECRET_KEY_NAME = /^(?:NEXT_PUBLIC|VITE|REACT_APP|NUXT_PUBLIC|EXPO_PUBLIC|PUBLIC)_|(?:PUBLIC|PUBLISHABLE|ANON|SITE)_KEY$|_KEY_(?:FILE|PATH|ID)$|_KEYFILE$|_(?:URL|URI|HOST|PORT|ID|NAME|USER|USERNAME|ALGORITHM|ALGO|LENGTH|SIZE|EXPIRE|EXPIRES|EXPIRY|TTL|DAYS|HOURS|MINUTES|SECONDS|ROUNDS|ENABLED|REQUIRED|PROVIDER|TYPE|REGION|BUCKET|ISSUER|AUDIENCE|HEADER|COOKIE|PREFIX|VERSION|PATH|DIR|DIRECTORY|FILE|FILENAME|IMAGE|TAG|EMAIL|DOMAIN|LOCALE|TIMEZONE|TZ|MODE|LEVEL|FORMAT|MODEL|ENDPOINT|CHANNEL|TOPIC|QUEUE|TABLE|SCHEMA|DATABASE|DB|INDEX|LIMIT|MAX|MIN|COUNT|TIMEOUT|INTERVAL|RETRIES)$/i;
 
 export function isSecretishKey(key) {
   if (NOT_SECRET_KEY_NAME.test(key)) return false;
@@ -421,9 +421,14 @@ export const ROUTE_DEFINITION = /@(?:app|router|bp|blueprint)\.(?:get|post|route
 // production. The second kind matters as much as the first: a docs route
 // written as `docs_url="/api/docs" if not settings.is_production else None`
 // is the *correct* pattern and must not be reported.
-export const AUTH_NEARBY = /Depends\(|Security\(|login_required|require(?:s)?_(?:auth|login|admin)|authenticate|authorized|IsAuthenticated|permission_classes|basic_?auth|api_?key|@auth|ensureAuth|requireUser|verify_token|HTTPBasic|guard/i;
+export const AUTH_NEARBY = /Depends\(|Security\(|login_required|require(?:s)?_?(?:auth|login|admin)|authenticate|authorized|IsAuthenticated|permission_classes|basic_?auth|api_?key|@auth|ensureAuth|ensureLoggedIn|requireUser|checkAuth|withAuth|verify_token|HTTPBasic|guard/i;
 export const NON_PRODUCTION_GUARD = /if\s+not\s+[A-Za-z_.]*(?:is_)?prod|if\s+[A-Za-z_.]*(?:DEBUG|debug)\b|NODE_ENV\s*[!=]==?\s*['"]production|!==\s*['"]production|ENVIRONMENT\s*[!=]=\s*['"]production|\bdev(?:elopment)?_only\b/;
-export const PROXY_DENY = /deny\s+all|return\s+403|respond\s+403|abort\s*\(\s*404/;
+// A route the proxy answers itself is closed, whichever status it picks. 404
+// belongs here as much as 403 — Caddy's `respond 404` is the idiomatic way to
+// hide a path, and the report's own fix text tells the user that "a 401, 403
+// or 404 is what you want to see", so flagging `respond 404` contradicted the
+// advice two lines below it.
+export const PROXY_DENY = /deny\s+all|return\s+40[0-9]|respond\s+40[0-9]|abort\s*\(\s*40[0-9]/;
 
 // --- #6: security headers that only cover part of the site ---
 

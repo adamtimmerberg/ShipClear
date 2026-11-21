@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
@@ -241,8 +242,41 @@ const args = process.argv.slice(2);
 const cmd = args[0];
 const root = process.cwd();
 
+/**
+ * The scan root is simply the working directory, so `shipclear` in the wrong
+ * terminal tab points the whole gate at a home directory. That is not a
+ * marginal mistake: a real run of this produced 34,330 findings, 99.4% of them
+ * from `.cache`, `.claude` and `.hermes` — other people's vendored source —
+ * and a 14.5 MB report whose verdict said DO NOT SHIP about nothing at all.
+ *
+ * SKIP_DIRS in lib/scan.js now drops those directories, but the honest fix is
+ * to refuse the root outright: a home directory is not a project, and no
+ * useful scan starts there.
+ */
+function refuseHomeDirectory(scanRoot) {
+  const home = path.resolve(os.homedir());
+  if (path.resolve(scanRoot) !== home) return false;
+  console.error(`
+  ShipClear is pointed at your home directory (${home}).
+
+  That is almost always a wrong turn in the terminal rather than what you
+  meant: a home directory holds package caches and other tools' state, not
+  one project, so the scan would spend its time on vendored source that is
+  not yours and report problems you cannot fix.
+
+  Run it from inside the project you are shipping instead:
+
+      cd ~/your-project
+      shipclear ${cmd || 'ship'}
+`);
+  return true;
+}
+
 let exitCode = 0;
 try {
+  if (['scan', 'ship', 'setup', 'badge'].includes(cmd) && refuseHomeDirectory(root)) {
+    process.exit(1);
+  }
   switch (cmd) {
     case 'setup':
       cmdSetup(root);
