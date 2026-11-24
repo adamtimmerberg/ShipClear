@@ -73,16 +73,19 @@ That runs the full gate and gives you a verdict:
        `npm install`
        Then run `npx shipclear ship` again — the check runs on its own.
 
-  ────────────────────────────────────────────────────────────
-  WHAT TO DO NEXT
-  ────────────────────────────────────────────────────────────
+  +-------------------+
+  |  WHAT TO DO NEXT  |
+  +-------------------+
    1. Rotate the keys listed above — now, before anything else. That is the step
       that actually protects you; the rest is cleanup.
-   2. Fix the findings. If you built this with an AI, paste it this:
+   2. Fix the findings. If you built this with an AI, paste the following into
+      the project AI chat to fix the issues:
+
         "Read SHIP-REPORT.md in this project and fix every finding, the critical
          ones first. Don't rewrite git history, and don't run any shipclear command
          with --fix-history or --probe — tell me if a finding needs one and I'll
          run it myself."
+
    3. Run `npx shipclear ship` again, and keep going until the verdict changes.
 
   Disclaimer: ShipClear runs a limited set of automated checks. It is a
