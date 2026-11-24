@@ -1336,11 +1336,17 @@ console.log('\nbadge');
   // that did not clear. Confirmed against the published 1.0.0.
   check('the generated workflow pins a CLI new enough to know --strict',
     yaml.includes(`shipclear@^${MIN_CLI_VERSION}`), yaml);
-  check('the pinned minimum is a version that actually exists', (() => {
+  // The badge must run the version that installed it. A hardcoded floor goes
+  // stale on the next release, and a badge then reports a green produced by
+  // an older, weaker gate than the one the user ran locally.
+  check('the badge pins the version that installed it', (() => {
     const v = JSON.parse(fs.readFileSync(path.join(here, '../package.json'), 'utf8')).version;
+    return MIN_CLI_VERSION === v;
+  })(), `MIN_CLI_VERSION=${MIN_CLI_VERSION}`);
+  check('...and the pin is new enough to understand --strict', (() => {
     const cmp = (a, b) => a.split('.').map(Number).reduce((acc, n, i) => acc || n - Number(b.split('.')[i]), 0);
-    return cmp(v, MIN_CLI_VERSION) >= 0;
-  })(), 'package.json version is behind MIN_CLI_VERSION');
+    return cmp(MIN_CLI_VERSION, '1.1.0') >= 0;
+  })(), MIN_CLI_VERSION);
   check('the generated workflow is named for the badge label', /^name: ShipClear$/m.test(yaml));
 
   // This repo's own workflow is what its own badge reports. If either flag
@@ -1810,6 +1816,10 @@ console.log('\ndocumented counts');
   check(`the README's check count matches the registry (${REGISTRY.length})`,
     readme.includes(`${REGISTRY.length} deterministic checks`),
     (readme.match(/\d+ deterministic checks/) || ['not found'])[0]);
+  const version = JSON.parse(fs.readFileSync(path.join(here, '../package.json'), 'utf8')).version;
+  check(`the README's sample output shows the current version (${version})`,
+    readme.includes(`ShipClear v${version} — ship report`),
+    (readme.match(/ShipClear v[\d.]+ — ship report/) || ['not found'])[0]);
   check(`the README's semantic count matches the checklist (${SEMANTIC_CHECKS.length})`,
     readme.includes(`${SEMANTIC_CHECKS.length}-point semantic checklist`),
     (readme.match(/[\w-]+-point semantic checklist/) || ['not found'])[0]);
