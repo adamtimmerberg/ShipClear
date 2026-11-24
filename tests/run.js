@@ -1774,5 +1774,20 @@ console.log('\nship report output');
     SEMANTIC_CHECKS.every((item) => md.includes(`- [ ] ${item}`)));
 }
 
+// --- the docs may not claim a number the code does not report ---
+//
+// The README said 22 and the wiki said 23, both hand-counted, neither
+// matching anything enumerable. These read the real values.
+console.log('\ndocumented counts');
+{
+  const readme = fs.readFileSync(path.join(here, '../README.md'), 'utf8');
+  check(`the README's check count matches the registry (${REGISTRY.length})`,
+    readme.includes(`${REGISTRY.length} deterministic checks`),
+    (readme.match(/\d+ deterministic checks/) || ['not found'])[0]);
+  check(`the README's semantic count matches the checklist (${SEMANTIC_CHECKS.length})`,
+    readme.includes(`${SEMANTIC_CHECKS.length}-point semantic checklist`),
+    (readme.match(/[\w-]+-point semantic checklist/) || ['not found'])[0]);
+}
+
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
 if (failures.length) process.exit(1);

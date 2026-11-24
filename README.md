@@ -33,7 +33,14 @@ npx shipclear ship
 That runs the full gate and gives you a verdict:
 
 ```
-  ShipClear v1.1.0 — ship report
+  ShipClear v1.2.1 — ship report
+  MIT · runs on your machine · nothing is uploaded
+
+  [✓] Secrets written in your code
+  [✗] Logins hardcoded in your code — 1 to look at
+  [–] Known-vulnerable dependencies
+  …
+  23 of 25 checks ran · 2 skipped
 
   🛑 CRITICAL  A secret key is written directly in your code
       where: server.js:7 — OpenAI API key: `sk-FAKE0…`
@@ -78,7 +85,7 @@ Most tools scan your app *after* you've made the mistake. ShipClear rides along 
 |---|---|
 | 🧠 **Prevention** | Rules for your AI assistant so secrets never get hardcoded in the first place — `.env` from the first line of code, no test accounts, no real data in the repo. |
 | 🚫 **Enforcement** | A git commit guard (`shipclear setup`) that blocks any commit containing secrets or a `.env` file. Deterministic — it isn't the AI deciding to be careful. (If the scanner itself can't run — you're offline, say — it lets the commit through with a warning rather than blocking your work; it fails safe, not stuck.) |
-| ✅ **The gate** | `shipclear ship`: 22 deterministic checks — across your code, your git history, *and* the config you deploy with (`.env`, docker-compose, proxy routes, bucket policies) — plus a semantic checklist for your AI, ending in one verdict — cleared to ship, or not. Found a secret in old commits? `shipclear ship --fix-history` erases that history safely (never-pushed repos only; it refuses if it would lose anything). |
+| ✅ **The gate** | `shipclear ship`: 25 deterministic checks — across your code, your git history, *and* the config you deploy with (`.env`, docker-compose, proxy routes, bucket policies) — plus a semantic checklist for your AI, ending in one verdict — cleared to ship, or not. It prints every check as it runs, and says plainly which ones it could **not** run here and why, because "all checks passed" on a project whose dependencies were never looked at is the false all-clear this tool exists to prevent. Found a secret in old commits? `shipclear ship --fix-history` erases that history safely (never-pushed repos only; it refuses if it would lose anything). |
 
 ## Works with every AI coding tool
 
@@ -105,7 +112,7 @@ Provider keys covered: AWS, Anthropic, OpenAI, OpenRouter, Groq, xAI, Hugging Fa
 
 Detection is tuned against real-world starter repos, with a false-positive regression test for every fix. And if you have `gitleaks` or `osv-scanner` installed, ShipClear automatically uses them for extra depth — it just never *requires* them.
 
-Plus a fifteen-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools), and — confirmed by asking, not by reading config — whether your live credentials differ from the published ones, whether anything can list your buckets, whether a proxy route exposes a backing service, whether user-supplied URLs are fetched safely, and whether your HTML responses carry the headers your API does.
+Plus a 15-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools), and — confirmed by asking, not by reading config — whether your live credentials differ from the published ones, whether anything can list your buckets, whether a proxy route exposes a backing service, whether user-supplied URLs are fetched safely, and whether your HTML responses carry the headers your API does.
 
 ## The badge can't lie
 
@@ -119,7 +126,7 @@ Most badges are a static green image: paste it once and it keeps vouching for ev
 
 | | means |
 |---|---|
-| 🟢 **passing** | every commit pushed to this branch cleared the gate — including its git history, so an old leaked secret keeps it red until the history is actually cleaned |
+| 🟢 **passing** | every commit pushed to this branch cleared these automated checks (the semantic checklist needs a person or an AI, and no CI job runs it) — including its git history, so an old leaked secret keeps it red until the history is actually cleaned |
 | 🔴 **failing** | a commit landed that ShipClear would not clear |
 | ⚪ **no status** | nothing has been checked, so nothing is claimed |
 
