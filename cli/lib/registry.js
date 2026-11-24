@@ -116,9 +116,13 @@ function dependencySkip(ctx) {
  *   quick  — also runs in `shipclear scan`; everything else is full-gate only
  *   skip   — reason string when this check cannot run here, else null
  */
+// Order matters in one place: hardcoded-logins runs before secrets-in-code,
+// so the secret check can suppress a generic-secret on a line the login
+// check has already explained better. Doing it afterwards left the check
+// reporting a count it no longer had.
 export const REGISTRY = [
-  { id: 'secrets-in-code', label: 'Secrets written in your code', emits: ['secret-in-code', 'generic-secret'], quick: true },
   { id: 'hardcoded-logins', label: 'Logins hardcoded in your code', emits: ['test-account'] },
+  { id: 'secrets-in-code', label: 'Secrets written in your code', emits: ['secret-in-code', 'generic-secret'], quick: true },
   { id: 'tls-verification-off', label: 'Certificate checking switched off', emits: ['tls-verification-off'] },
   { id: 'debug-mode-on', label: 'Debug mode left on', emits: ['debug-mode-on'] },
   { id: 'personal-paths', label: 'Your own file paths leaking into the repo', emits: ['personal-path'] },

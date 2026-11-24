@@ -71,9 +71,6 @@ export function runGate(root, { quick = false, onCheck = null } = {}) {
     }
     c.checks.push(record);
     if (onCheck) onCheck(record);
-    // Runs in the position the single-pass version ran it: after the
-    // file-content checks, before gitleaks adds its own.
-    if (entry.id === 'personal-paths') dropDuplicateAccountSecrets(c);
   }
 
   return { findings: c.findings, notes: c.notes, inGit: c.inGit, checks: c.checks };
@@ -171,31 +168,29 @@ function* codeFiles(c, { skipDocs = false } = {}) {
   }
 }
 
-// A generic-secret on the same line as a test-account is the same problem
-// told twice — keep the clearer explanation.
-function dropDuplicateAccountSecrets(c) {
-  const accountLines = new Set(
-    c.findings.filter((f) => f.id === 'test-account').map((f) => `${f.file}:${f.line}`)
-  );
-  const kept = c.findings.filter(
-    (f) => !(f.id === 'generic-secret' && accountLines.has(`${f.file}:${f.line}`))
-  );
-  c.findings.length = 0;
-  c.findings.push(...kept);
-}
 
 /** One runner per registry entry, keyed by its id. */
 const RUNNERS = {
   'secrets-in-code': (c) => {
     const out = [];
+    // A generic-secret on the same line as a test-account is the same problem
+    // told twice — keep the clearer explanation. This used to be a pass over
+    // the findings afterwards, which left this check reporting a count it no
+    // longer had: "2 to look at" above a report containing one. The logins
+    // check runs first now, so the duplicate is never created.
+    const accountLines = new Set(
+      c.findings.filter((f) => f.id === 'test-account').map((f) => `${f.file}:${f.line}`)
+    );
     for (const [rel, content] of codeFiles(c)) {
     for (const hit of findSecrets(content, { includeGeneric: !isDocFile(rel), docFile: isDocFile(rel) })) {
       c.seenSecretValues.add(hit.match);
+      const line = lineOfIndex(content, hit.index);
+      if (hit.patternId === 'generic-secret' && accountLines.has(`${rel}:${line}`)) continue;
       out.push({
         id: hit.patternId === 'generic-secret' ? 'generic-secret' : 'secret-in-code',
         severity: hit.severity,
         file: rel,
-        line: lineOfIndex(content, hit.index),
+        line,
         detail: `${hit.name}: \`${maskSecret(hit.value ?? hit.match)}\``,
         uncommitted: c.uncommitted.has(rel),
         dbInContainer: isContainerConfig(rel) && /volumes\s*:/.test(content)
