@@ -8,6 +8,7 @@ import http from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
+import { REGISTRY } from '../cli/lib/registry.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
@@ -1609,6 +1610,89 @@ console.log('\npersonal-path volume');
     found.some((f) => f.file === 'bundle.js' && /400 occurrences/.test(f.detail)));
   check('a file with a single hit carries no occurrence count',
     found.some((f) => f.file === 'one.py' && !/occurrences/.test(f.detail)));
+}
+
+// A bare git repo with nothing in it — the registry tests care about which
+// checks run, not about what they find.
+function emptyRepo(tag) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `shipclear-${tag}-`));
+  execFileSync('git', ['-c', 'user.email=t@shipclear.local', '-c', 'user.name=T',
+    '-c', 'commit.gpgsign=false', 'init', '-q', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
+  return dir;
+}
+
+// --- the check registry: the number of checks is counted, never claimed ---
+//
+// The README once said 22 and the wiki said 23, because both were counted by
+// hand. These guards make the registry the only place the answer lives, and
+// make it impossible to add a finding without attributing it to a check.
+console.log('\ncheck registry');
+{
+  const ids = REGISTRY.map((c) => c.id);
+  check('every check has a unique id', new Set(ids).size === ids.length);
+  check('every check has a label a non-developer can read',
+    REGISTRY.every((c) => typeof c.label === 'string' && c.label.length > 3));
+
+  const claimed = new Set(REGISTRY.flatMap((c) => c.emits));
+  const explained = Object.keys(EXPLAIN);
+  const unclaimed = explained.filter((id) => !claimed.has(id));
+  check('every finding id belongs to a check in the registry', unclaimed.length === 0, unclaimed.join(', '));
+  const unexplained = [...claimed].filter((id) => !explained.includes(id));
+  check('every id a check can emit has an explanation', unexplained.length === 0, unexplained.join(', '));
+
+  // The count is read, not written down. A hardcoded number here would
+  // recreate the drift this registry exists to kill.
+  const dir = emptyRepo('reg-count');
+  fs.writeFileSync(path.join(dir, 'app.js'), 'const x = 1;\n');
+  // A package.json with no lockfile: npm audit has nothing to read, so the
+  // dependencies really are unchecked — as opposed to a project with no
+  // manifest at all, where there is genuinely nothing to check.
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","dependencies":{"left-pad":"1.3.0"}}\n');
+  const { checks } = runGate(dir);
+  check('the gate reports one result per registered check', checks.length === REGISTRY.length);
+  check('every result carries a status', checks.every((c) => ['passed', 'findings', 'skipped'].includes(c.status)));
+  check('every skipped check says why, in a sentence', checks.filter((c) => c.status === 'skipped')
+    .every((c) => typeof c.reason === 'string' && c.reason.length > 20));
+  check('a skipped check is never counted as passed',
+    !checks.some((c) => c.status === 'skipped' && c.count > 0));
+
+  // The reason this exists: a project with no npm lockfile has had its
+  // dependencies checked by nothing, and must not be told otherwise.
+  const deps = checks.find((c) => c.id === 'dependency-vulns');
+  check('a project with no lockfile reports the dependency check as skipped', deps.status === 'skipped', deps.status);
+  check('...and says the dependencies were not checked', /not checked/.test(deps.reason), deps.reason);
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  // pnpm/yarn/bun projects must never be told to run `npm install` — it would
+  // add a second, competing lockfile to their repo.
+  for (const [lock, manager] of [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lockb', 'bun']]) {
+    const alt = emptyRepo(`reg-${manager}`);
+    fs.writeFileSync(path.join(alt, 'package.json'), '{"name":"x"}\n');
+    fs.writeFileSync(path.join(alt, lock), '\n');
+    const d = runGate(alt).checks.find((c) => c.id === 'dependency-vulns');
+    check(`a ${manager} project is told its dependencies were not checked`,
+      d.status === 'skipped' && d.reason.includes(manager), d.reason);
+    check(`...and is warned off \`npm install\`, which would add a second lockfile`,
+      /Do not run `npm install`/.test(d.reason), d.reason);
+    fs.rmSync(alt, { recursive: true, force: true });
+  }
+
+  // A quick scan runs a deliberate subset; saying so is the whole point.
+  const q = emptyRepo('reg-quick');
+  const quick = runGate(q, { quick: true }).checks;
+  check('a quick scan still reports every check, skipped ones included', quick.length === REGISTRY.length);
+  check('a quick scan skips the full-gate checks with a reason naming `shipclear ship`',
+    quick.filter((c) => c.status === 'skipped').some((c) => /shipclear ship/.test(c.reason)));
+  check('a quick scan runs fewer checks than the full gate',
+    quick.filter((c) => c.status !== 'skipped').length < REGISTRY.length);
+  fs.rmSync(q, { recursive: true, force: true });
+
+  // onCheck is what lets the CLI print progress as it happens.
+  const live = emptyRepo('reg-live');
+  const seen = [];
+  runGate(live, { onCheck: (r) => seen.push(r.id) });
+  check('onCheck fires once per check, in registry order', seen.join(',') === REGISTRY.map((c) => c.id).join(','));
+  fs.rmSync(live, { recursive: true, force: true });
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
