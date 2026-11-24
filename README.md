@@ -40,7 +40,7 @@ That runs the full gate and gives you a verdict:
   |     █ █  █  ██  █      █    █    █    █  █ █ █   |
   |  ████ █  █ ████ █      ████ ████ ████ █  █ █  █  |
   |                                                  |
-  |  v1.3.0 — ship report                            |
+  |  v1.4.0 — ship report                            |
   +--------------------------------------------------+
   MIT · runs on your machine · nothing is uploaded
 
