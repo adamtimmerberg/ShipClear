@@ -12,7 +12,7 @@ import { REGISTRY } from '../cli/lib/registry.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
 import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN, banner, checkLine, tallyLine, nextSteps, DISCLAIMER, SEMANTIC_CHECKS } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
-import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
+import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION, defaultBranch, badgeBranchIn } from '../cli/lib/badge.js';
 import { runProbe, normalizeBase } from '../cli/lib/probe.js';
 import { runInfraChecks } from '../cli/lib/infra.js';
 import { isSkippedPath } from '../cli/lib/scan.js';
@@ -1348,6 +1348,60 @@ console.log('\nbadge');
     return cmp(MIN_CLI_VERSION, '1.1.0') >= 0;
   })(), MIN_CLI_VERSION);
   check('the generated workflow is named for the badge label', /^name: ShipClear$/m.test(yaml));
+
+  // The bug this guards, reproduced exactly as it happened: install a badge
+  // on main, cut a release branch, re-run `badge`. The old code rewrote the
+  // badge to ?branch=release/9.9.9 and shipped a public security claim about
+  // a branch that was about to be deleted.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-badgebranch-'));
+    const git = (...a) => execFileSync('git', ['-c', 'user.email=t@shipclear.local',
+      '-c', 'user.name=T', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q', '-b', 'main');
+    git('remote', 'add', 'origin', 'https://github.com/someone/thing.git');
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Thing\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'first');
+    // What a clone would have: a remote-tracking main, and origin/HEAD.
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    git('update-ref', 'refs/remotes/origin/main', sha);
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+
+    check('the default branch comes from origin, not the checkout', defaultBranch(dir) === 'main', defaultBranch(dir));
+
+    const first = installBadge(dir);
+    check('a first install points the badge at the default branch', first.branch === 'main', first.branch);
+    const afterFirst = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+    check('...and writes that branch into the README', badgeBranchIn(afterFirst) === 'main', String(badgeBranchIn(afterFirst)));
+
+    git('checkout', '-q', '-b', 'release/9.9.9');
+    const second = installBadge(dir);
+    check('re-running from a release branch keeps the badge on main', second.branch === 'main', second.branch);
+    const afterSecond = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+    check('...and does not touch the README', afterSecond === afterFirst,
+      badgeBranchIn(afterSecond) + ' — the exact regression this guards');
+    check('...and says which branch the badge reports, and which you are on',
+      second.done.some((d) => /already reports `main`/.test(d) && /release\/9\.9\.9/.test(d)), second.done.join(' | '));
+
+    // A first install from a feature branch must not quietly track it either.
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Thing\n');
+    const third = installBadge(dir);
+    check('a first install from a feature branch still targets the default', third.branch === 'main', third.branch);
+    check('...and says so plainly', third.done.some((d) => /default branch/.test(d)), third.done.join(' | '));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // No remote-tracking refs at all (a repo that has never been fetched):
+  // fall back to the checkout rather than guessing or throwing.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shipclear-badgenoremote-'));
+    const git = (...a) => execFileSync('git', ['-c', 'user.email=t@shipclear.local',
+      '-c', 'user.name=T', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q', '-b', 'trunk');
+    fs.writeFileSync(path.join(dir, 'x.txt'), 'x\n');
+    git('add', '-A'); git('commit', '-q', '-m', 'first');
+    check('with nothing to ask, the default falls back to the checkout', defaultBranch(dir) === 'trunk', defaultBranch(dir));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 
   // Caught in the wild: running `shipclear badge` while on a release branch
   // silently repointed this README's badge at that branch, and `git add -A`
