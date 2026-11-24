@@ -7,7 +7,7 @@
 Your AI writes code fast. ShipClear makes sure it's safe to ship —
 free, open source, runs 100% locally, works with every AI coding tool.
 
-[![ShipClear](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml/badge.svg?branch=release%2F1.3.0&event=push)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml)
+[![ShipClear](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml/badge.svg?branch=main&event=push)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml)
 [![CI](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml/badge.svg)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
@@ -38,12 +38,12 @@ That runs the full gate and gives you a verdict:
 
   [✓] Secrets written in your code
   [✗] Logins hardcoded in your code — 1 to look at
+  [✓] Secrets anywhere in your git history
   [–] Known-vulnerable dependencies
   …
-  23 of 25 checks ran · 2 skipped
 
   🛑 CRITICAL  A secret key is written directly in your code
-      where: server.js:7 — OpenAI API key: `sk-FAKE0…`
+      where: server.js:1 — OpenAI API key: `sk-FAKE0…`
       why it matters: Anyone who sees this code — on GitHub, in a screenshot, in
       your deployed app — can use this key as you, and you get the bill.
       what to do: Move the value into your .env file and read it from an
@@ -53,10 +53,35 @@ That runs the full gate and gives you a verdict:
   Fixed for you:
    ✔ Added `.env` protection to .gitignore (created it if missing).
 
+  23 of 25 checks ran · 2 skipped
   🛑 DO NOT SHIP — fix the critical findings first.
+
+  Not checked here:
+   – Known-vulnerable dependencies: no package-lock.json, so your dependencies
+     were not checked for known vulnerabilities.
+     To check them:
+       Create the file npm reads, which also installs your packages:
+       `npm install`
+       Then run `shipclear ship` again — the check runs on its own from then on.
+
+  What to do next
+   1. Rotate the keys listed above — now, before anything else. That is the step
+      that actually protects you; the rest is cleanup.
+   2. Fix the findings. If you built this with an AI, paste it this:
+        "Read SHIP-REPORT.md in this project and fix every finding, the critical
+         ones first. Don't rewrite git history, and don't run any shipclear command
+         with --fix-history or --probe — tell me if a finding needs one and I'll
+         run it myself."
+   3. Run `shipclear ship` again, and keep going until the verdict changes.
+
+  ShipClear runs a limited set of automated checks. It is a supplement to
+  security review, not a substitute for one, and a clear verdict is not a
+  guarantee that your software is secure.
 ```
 
 Every finding answers three questions in plain English: **what is this, why does it matter, what do I do.** Safe fixes are applied for you. No security background needed.
+
+Note the `[–]` line. ShipClear tells you which checks it could **not** run here and what to type to turn them on — because "all checks passed" on a project whose dependencies were never looked at is the false all-clear this tool exists to prevent.
 
 ## Commands
 
@@ -110,6 +135,8 @@ Full walkthroughs: [docs/quickstart.md](docs/quickstart.md). Stuck on anything? 
 
 Provider keys covered: AWS, Anthropic, OpenAI, OpenRouter, Groq, xAI, Hugging Face, Stripe, GitHub, Google, Slack, SendGrid, npm, DigitalOcean, Azure, private keys, database URLs with real passwords — and Supabase JWTs done right: service-role keys are flagged, anon keys (public by design) are left alone.
 
+The dependency check reads npm's `package-lock.json`. If your project uses pnpm, yarn, bun, or isn't JavaScript at all, ShipClear says so rather than reporting a pass it didn't earn, and tells you how to check — your package manager's own audit, or `osv-scanner`, which it then uses automatically for every ecosystem.
+
 Detection is tuned against real-world starter repos, with a false-positive regression test for every fix. And if you have `gitleaks` or `osv-scanner` installed, ShipClear automatically uses them for extra depth — it just never *requires* them.
 
 Plus a 15-point semantic checklist your AI assistant runs — the checks a regex can't do: auth **and ownership** on every route, database rules, client-side leakage, injection/XSS/uploads, server-side trust (prices, roles, webhook signatures), session hygiene and rate limiting, debug surface, an AI-surface review for apps that call LLMs themselves (prompt injection, unvalidated model output, overprivileged tools), and — confirmed by asking, not by reading config — whether your live credentials differ from the published ones, whether anything can list your buckets, whether a proxy route exposes a backing service, whether user-supplied URLs are fetched safely, and whether your HTML responses carry the headers your API does.
@@ -154,7 +181,7 @@ The single exception is opt-in and explicit: `ship --probe <url>` makes read-onl
 
 ## What ShipClear can't do
 
-Honesty is a feature in a security tool. ShipClear does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
+Honesty is a feature in a security tool. ShipClear is a **supplement to security review, not a substitute for one** — a clear verdict is not a guarantee that your software is secure, and the tool says so on every run. Specifically, it does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
 
 ## Updates
 

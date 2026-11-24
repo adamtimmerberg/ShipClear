@@ -1349,6 +1349,16 @@ console.log('\nbadge');
   })(), MIN_CLI_VERSION);
   check('the generated workflow is named for the badge label', /^name: ShipClear$/m.test(yaml));
 
+  // Caught in the wild: running `shipclear badge` while on a release branch
+  // silently repointed this README's badge at that branch, and `git add -A`
+  // shipped it. The badge then described a branch that was about to be
+  // deleted instead of main — a public security claim about the wrong thing.
+  check("this repo's README badge tracks main", (() => {
+    const readme = fs.readFileSync(path.join(here, '../README.md'), 'utf8');
+    const m = readme.match(/shipclear\.yml\/badge\.svg\?branch=([^&)]+)/);
+    return m && m[1] === 'main';
+  })(), 'README badge is pinned to a branch other than main');
+
   // This repo's own workflow is what its own badge reports. If either flag
   // were ever dropped from it, this project's badge could show green for a
   // repo that did not fully clear — the exact failure it warns users about.
