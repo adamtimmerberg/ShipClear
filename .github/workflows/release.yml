@@ -68,3 +68,47 @@ jobs:
         run: node cli/bin/shipclear.js ship --no-fix --strict
 
       - run: npm publish
+
+      # A publish is not a release until someone can install it.
+      #
+      # npm's metadata replicates ahead of its tarballs: for minutes after
+      # `npm publish` returns, the packument already lists the new version as
+      # `latest` while a GET of that version's tarball still 404s. Every
+      # `npx shipclear` in that window fails outright — worse than serving
+      # the previous version, because the command simply errors.
+      #
+      # It has happened on three releases now (1.2.0, 1.4.0, 1.5.0), measured
+      # at around five and a half minutes each time. Nothing can shorten it,
+      # but this stops the workflow reporting success — and release notes
+      # going out — while the package is still uninstallable.
+      #
+      # Poll the tarball, never the packument: `latest` moving is not the
+      # same as the package being installable.
+      - name: Wait until the published version is installable
+        run: |
+          version=$(node -p "require('./package.json').version")
+          url="https://registry.npmjs.org/shipclear/-/shipclear-$version.tgz"
+          for i in $(seq 1 90); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "tarball fetchable after ~$((i * 10))s"
+              exit 0
+            fi
+            echo "attempt $i: HTTP $code"
+            sleep 10
+          done
+          echo "::error::$url is still not fetchable 15 minutes after publish"
+          exit 1
+
+      # The real test: install it the way a user would, from a directory with
+      # no package.json of its own, so npx cannot resolve the local checkout.
+      - name: Install it the way a user would
+        run: |
+          version=$(node -p "require('./package.json').version")
+          dir=$(mktemp -d)
+          got=$(cd "$dir" && npx --yes shipclear@"$version" --version | tr -d '\r' | tail -1)
+          echo "npx shipclear@$version reported: $got"
+          if [ "$got" != "$version" ]; then
+            echo "::error::expected $version from npx, got '$got'"
+            exit 1
+          fi
