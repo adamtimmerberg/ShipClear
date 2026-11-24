@@ -8,7 +8,8 @@ import {
   personalPaths, TLS_VERIFICATION_OFF, DEBUG_MODE_ON, isSecretishKey,
 } from './patterns.js';
 import { loadIgnore } from './ignore.js';
-import { runInfraChecks } from './infra.js';
+import { runInfraChecks, infraContext, INFRA_RUNNERS } from './infra.js';
+import { REGISTRY, QUICK_SKIP_REASON } from './registry.js';
 import { walkFiles, isTextCandidate, isSkippedPath, readFileSafe } from './scan.js';
 import { isGitRepo, hasCommits, hasRemote, branchNames, trackedFiles, untrackedFiles, historyAddedLines } from './git.js';
 
@@ -34,13 +35,55 @@ const isDocFile = (rel) => DOC_EXT.has(path.extname(rel).toLowerCase());
 const isContainerConfig = (rel) => /^(?:docker-)?compose(?:[.-].+)?\.ya?ml$|\.ya?ml$/i.test(path.posix.basename(rel));
 
 /**
- * Run the deterministic layer of the gate. Returns { findings, notes, inGit }.
- * Findings: { id, severity, file?, line?, detail?, commit? }.
- * Severity: critical | high | medium | low | info.
+ * Run the deterministic layer of the gate.
+ *
+ * Every check lives in REGISTRY (lib/registry.js) and is run through it, so
+ * the number of checks is counted rather than claimed, and a check that
+ * cannot run here is reported as skipped rather than silently passing. That
+ * distinction is the point: "all checks passed" on a project whose
+ * dependencies were never looked at is the false all-clear this tool exists
+ * to prevent.
+ *
+ * Returns { findings, notes, inGit, checks }, where checks is one entry per
+ * registry item: { id, label, status: 'passed' | 'findings' | 'skipped',
+ * count, reason }.
  */
-export function runGate(root, { quick = false } = {}) {
-  const findings = [];
-  const notes = [];
+export function runGate(root, { quick = false, onCheck = null } = {}) {
+  const c = buildContext(root, quick);
+
+  for (const entry of REGISTRY) {
+    let record;
+    if (quick && !entry.quick) {
+      record = { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason: QUICK_SKIP_REASON };
+    } else {
+      const reason = entry.skip ? entry.skip(c) : null;
+      if (reason) {
+        record = { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason };
+      } else {
+        c.pendingSkip = null;
+        const found = RUNNERS[entry.id](c);
+        for (const f of found) Object.defineProperty(f, '_check', { value: entry.id, enumerable: false });
+        c.findings.push(...found);
+        record = c.pendingSkip
+          ? { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason: c.pendingSkip }
+          : { id: entry.id, label: entry.label, status: found.length ? 'findings' : 'passed', count: found.length };
+      }
+    }
+    c.checks.push(record);
+    if (onCheck) onCheck(record);
+    // Runs in the position the single-pass version ran it: after the
+    // file-content checks, before gitleaks adds its own.
+    if (entry.id === 'personal-paths') dropDuplicateAccountSecrets(c);
+  }
+
+  return { findings: c.findings, notes: c.notes, inGit: c.inGit, checks: c.checks };
+}
+
+/**
+ * Everything the checks share: the two file lists, a memoized reader, and the
+ * answers to the questions the skip predicates ask.
+ */
+function buildContext(root, quick) {
   const ignored = loadIgnore(root);
   const inGit = isGitRepo(root);
 
@@ -63,162 +106,252 @@ export function runGate(root, { quick = false } = {}) {
   const untrackedList = inGit
     ? untrackedFiles(root).filter((f) => !ignored(f) && !isSkippedPath(f))
     : [];
-  const uncommitted = new Set(untrackedList);
   const allFiles = inGit
     ? [...trackedList, ...untrackedList]
     : walkFiles(root).filter((f) => !ignored(f));
+
+  const notes = [];
   if (!inGit) notes.push('Not a git repository — history and tracked-file checks were skipped.');
 
-  const read = (rel) => readFileSafe(path.join(root, rel));
+  // Memoized because the content checks each walk the file list now that they
+  // are separate; without it the split would read every file five times.
+  const cache = new Map();
+  const binaries = new Map();
 
-  // Raw values already reported from the working tree — used to suppress
-  // duplicate history findings for secrets that are still present (the
-  // in-code finding's fix advice already covers rotation).
-  const seenSecretValues = new Set();
+  return {
+    root,
+    quick,
+    ignored,
+    inGit,
+    hasCommits: inGit && hasCommits(root),
+    trackedList,
+    untrackedList,
+    uncommitted: new Set(untrackedList),
+    allFiles,
+    notes,
+    findings: [],
+    checks: [],
+    seenSecretValues: new Set(),
+    infra: null,
+    pendingSkip: null,
+    read(rel) {
+      if (!cache.has(rel)) cache.set(rel, readFileSafe(path.join(root, rel)));
+      return cache.get(rel);
+    },
+    has(name) {
+      if (!binaries.has(name)) binaries.set(name, hasBinary(name));
+      return binaries.get(name);
+    },
+    /** A check that only discovers at runtime that it cannot run says so. */
+    skip(reason) { this.pendingSkip = reason; },
+  };
+}
 
-  // --- secrets in code (skipping .env files, which are *supposed* to hold them) ---
-  for (const rel of allFiles) {
+/**
+ * The files the content checks look at: everything a commit would contain,
+ * minus the ones that are supposed to hold secrets.
+ */
+function* codeFiles(c, { skipDocs = false } = {}) {
+  for (const rel of c.allFiles) {
     if (!isTextCandidate(rel) || isEnvFile(rel) || isEnvTemplate(rel) || isKeyFile(rel)) continue;
     // ShipClear's own store for the test logins the prevention rules tell the
     // AI to generate. It is *supposed* to contain credentials, exactly as
     // .env is — finding them there is not a finding. Its dangerous state (a
-    // committed registry) is covered by the tracked-state block below.
+    // committed registry) is covered by the tracked-state check.
     if (rel.startsWith('.shipclear/')) continue;
-    const content = read(rel);
+    if (skipDocs && isDocFile(rel)) continue;
+    const content = c.read(rel);
     if (content === null) continue;
+    yield [rel, content];
+  }
+}
 
+// A generic-secret on the same line as a test-account is the same problem
+// told twice — keep the clearer explanation.
+function dropDuplicateAccountSecrets(c) {
+  const accountLines = new Set(
+    c.findings.filter((f) => f.id === 'test-account').map((f) => `${f.file}:${f.line}`)
+  );
+  const kept = c.findings.filter(
+    (f) => !(f.id === 'generic-secret' && accountLines.has(`${f.file}:${f.line}`))
+  );
+  c.findings.length = 0;
+  c.findings.push(...kept);
+}
+
+/** One runner per registry entry, keyed by its id. */
+const RUNNERS = {
+  'secrets-in-code': (c) => {
+    const out = [];
+    for (const [rel, content] of codeFiles(c)) {
     for (const hit of findSecrets(content, { includeGeneric: !isDocFile(rel), docFile: isDocFile(rel) })) {
-      seenSecretValues.add(hit.match);
-      findings.push({
+      c.seenSecretValues.add(hit.match);
+      out.push({
         id: hit.patternId === 'generic-secret' ? 'generic-secret' : 'secret-in-code',
         severity: hit.severity,
         file: rel,
         line: lineOfIndex(content, hit.index),
         detail: `${hit.name}: \`${maskSecret(hit.value ?? hit.match)}\``,
-        uncommitted: uncommitted.has(rel),
+        uncommitted: c.uncommitted.has(rel),
         dbInContainer: isContainerConfig(rel) && /volumes\s*:/.test(content)
           && /postgres|mysql|mariadb|mongo|redis/i.test(hit.name + hit.match),
       });
     }
-
-    if (!quick && !isDocFile(rel)) {
-      // Hardcoded account pairs: a suspicious email literal with a password
-      // assignment within three lines of it.
-      const lines = content.split('\n');
-      lines.forEach((lineText, i) => {
-        if (!SUSPICIOUS_ACCOUNT_EMAIL.test(lineText)) return;
-        const nearby = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
-        if (PASSWORD_ASSIGNMENT.test(nearby)) {
-          findings.push({
-            id: 'test-account',
-            severity: 'high',
-            file: rel,
-            line: i + 1,
-            uncommitted: uncommitted.has(rel),
-            detail: 'A login (username or email) and password pair is written directly in the code.',
-          });
-        }
-      });
-
-      TLS_VERIFICATION_OFF.lastIndex = 0;
-      let tls;
-      while ((tls = TLS_VERIFICATION_OFF.exec(content))) {
-        findings.push({
-          id: 'tls-verification-off',
-          severity: 'medium',
-          file: rel,
-          line: lineOfIndex(content, tls.index),
-          detail: `\`${tls[0].trim()}\``,
-        });
-      }
-
-      DEBUG_MODE_ON.lastIndex = 0;
-      let dbg;
-      while ((dbg = DEBUG_MODE_ON.exec(content))) {
-        findings.push({
-          id: 'debug-mode-on',
-          severity: 'medium',
-          file: rel,
-          line: lineOfIndex(content, dbg.index),
-          detail: `\`${dbg[0].trim()}\``,
-        });
-      }
-
-      // One finding per file, not per occurrence. This rule matches a string
-      // that recurs — a path baked into a lockfile or a generated bundle can
-      // appear thousands of times in one file, and emitting each hit once
-      // turned a single real run into 33,569 findings and a 14.5 MB report,
-      // because every one of them repeats the full remediation prose. The
-      // actionable unit is the file, so report the file and count the rest.
-      const pathHits = personalPaths(content);
-      if (pathHits.length) {
-        const unique = [...new Set(pathHits.map((h) => h.match))];
-        const shown = unique.slice(0, 3).map((u) => `\`${u}\``).join(', ');
-        const more = unique.length > 3 ? `, and ${unique.length - 3} more` : '';
-        findings.push({
-          id: 'personal-path',
-          severity: 'low',
-          file: rel,
-          line: lineOfIndex(content, pathHits[0].index),
-          detail: shown + more
-            + (pathHits.length > unique.length ? ` (${pathHits.length} occurrences)` : ''),
-        });
-      }
     }
-  }
+    return out;
+  },
 
-  // A generic-secret on the same line as a test-account is the same problem
-  // told twice — keep the clearer explanation.
-  const accountLines = new Set(
-    findings.filter((f) => f.id === 'test-account').map((f) => `${f.file}:${f.line}`)
-  );
-  const deduped = findings.filter(
-    (f) => !(f.id === 'generic-secret' && accountLines.has(`${f.file}:${f.line}`))
-  );
-  findings.length = 0;
-  findings.push(...deduped);
+  'hardcoded-logins': (c) => {
+    const out = [];
+    for (const [rel, content] of codeFiles(c, { skipDocs: true })) {
+    // Hardcoded account pairs: a suspicious email literal with a password
+    // assignment within three lines of it.
+    const lines = content.split('\n');
+    lines.forEach((lineText, i) => {
+      if (!SUSPICIOUS_ACCOUNT_EMAIL.test(lineText)) return;
+      const nearby = lines.slice(Math.max(0, i - 3), i + 4).join('\n');
+      if (PASSWORD_ASSIGNMENT.test(nearby)) {
+        out.push({
+          id: 'test-account',
+          severity: 'high',
+          file: rel,
+          line: i + 1,
+          uncommitted: c.uncommitted.has(rel),
+          detail: 'A login (username or email) and password pair is written directly in the code.',
+        });
+      }
+    });
+    }
+    return out;
+  },
 
-  // --- tracked files that should never be tracked ---
-  // trackedList, not allFiles: "this is committed" is a claim about git's
-  // index, and an untracked .env reported as committed would be a false
-  // critical pointing at a file that has leaked nothing.
-  if (inGit) {
-    for (const rel of trackedList) {
-      if (isEnvFile(rel)) {
-        findings.push({ id: 'env-tracked', severity: 'critical', file: rel });
-      } else if (isKeyFile(rel)) {
-        findings.push({ id: 'key-file-tracked', severity: 'critical', file: rel });
-      } else if (rel.startsWith('.shipclear/')) {
-        // The prevention rules tell the AI to keep generated test credentials
-        // here, git-ignored. If it's tracked, that ignore never happened.
-        findings.push({
+  'tls-verification-off': (c) => {
+    const out = [];
+    for (const [rel, content] of codeFiles(c, { skipDocs: true })) {
+    TLS_VERIFICATION_OFF.lastIndex = 0;
+    let tls;
+    while ((tls = TLS_VERIFICATION_OFF.exec(content))) {
+      out.push({
+        id: 'tls-verification-off',
+        severity: 'medium',
+        file: rel,
+        line: lineOfIndex(content, tls.index),
+        detail: `\`${tls[0].trim()}\``,
+      });
+    }
+    }
+    return out;
+  },
+
+  'debug-mode-on': (c) => {
+    const out = [];
+    for (const [rel, content] of codeFiles(c, { skipDocs: true })) {
+    DEBUG_MODE_ON.lastIndex = 0;
+    let dbg;
+    while ((dbg = DEBUG_MODE_ON.exec(content))) {
+      out.push({
+        id: 'debug-mode-on',
+        severity: 'medium',
+        file: rel,
+        line: lineOfIndex(content, dbg.index),
+        detail: `\`${dbg[0].trim()}\``,
+      });
+    }
+    }
+    return out;
+  },
+
+  'personal-paths': (c) => {
+    const out = [];
+    for (const [rel, content] of codeFiles(c, { skipDocs: true })) {
+    // One finding per file, not per occurrence. This rule matches a string
+    // that recurs — a path baked into a lockfile or a generated bundle can
+    // appear thousands of times in one file, and emitting each hit once
+    // turned a single real run into 33,569 findings and a 14.5 MB report,
+    // because every one of them repeats the full remediation prose. The
+    // actionable unit is the file, so report the file and count the rest.
+    const pathHits = personalPaths(content);
+    if (pathHits.length) {
+      const unique = [...new Set(pathHits.map((h) => h.match))];
+      const shown = unique.slice(0, 3).map((u) => `\`${u}\``).join(', ');
+      const more = unique.length > 3 ? `, and ${unique.length - 3} more` : '';
+      out.push({
+        id: 'personal-path',
+        severity: 'low',
+        file: rel,
+        line: lineOfIndex(content, pathHits[0].index),
+        detail: shown + more
+          + (pathHits.length > unique.length ? ` (${pathHits.length} occurrences)` : ''),
+      });
+    }
+    }
+    return out;
+  },
+
+  'committed-env-files': (c) => {
+    const out = [];
+    for (const rel of c.trackedList) {
+      if (isEnvFile(rel)) out.push({ id: 'env-tracked', severity: 'critical', file: rel });
+    }
+    return out;
+  },
+
+  'committed-key-files': (c) => {
+    const out = [];
+    for (const rel of c.trackedList) {
+      if (!isEnvFile(rel) && isKeyFile(rel)) out.push({ id: 'key-file-tracked', severity: 'critical', file: rel });
+    }
+    return out;
+  },
+
+  'committed-test-logins': (c) => {
+    const out = [];
+    for (const rel of c.trackedList) {
+      // The prevention rules tell the AI to keep generated test credentials
+      // here, git-ignored. If it's tracked, that ignore never happened.
+      if (!isEnvFile(rel) && !isKeyFile(rel) && rel.startsWith('.shipclear/')) {
+        out.push({
           id: 'test-account',
           severity: 'high',
           file: rel,
           detail: 'This is where ShipClear\'s rules tell your AI to keep test logins — it must never be committed.',
         });
-      } else {
-        const artifact = AGENT_ARTIFACTS.find((p) => rel.startsWith(p));
-        if (artifact) findings.push({ id: 'agent-artifact', severity: 'low', file: rel });
       }
     }
-  }
+    return out;
+  },
 
+  'agent-artifacts': (c) => {
+    const out = [];
+    for (const rel of c.trackedList) {
+      if (isEnvFile(rel) || isKeyFile(rel) || rel.startsWith('.shipclear/')) continue;
+      const artifact = AGENT_ARTIFACTS.find((p) => rel.startsWith(p));
+      if (artifact) out.push({ id: 'agent-artifact', severity: 'low', file: rel });
+    }
+    return out;
+  },
+
+  'uncommitted-key-files': (c) => {
+    const out = [];
   // --- not committed yet, but `git add -A` would take it ---
   // A private key sitting in the project folder has leaked nothing, so this
   // is not a critical — but it is one command away from being one, and the
   // .gitignore line that prevents it costs nothing.
-  for (const rel of untrackedList) {
-    if (isKeyFile(rel)) findings.push({ id: 'key-file-uncommitted', severity: 'high', file: rel });
+  for (const rel of c.untrackedList) {
+    if (isKeyFile(rel)) out.push({ id: 'key-file-uncommitted', severity: 'high', file: rel });
   }
+    return out;
+  },
 
+  'gitignore-coverage': (c) => {
+    const out = [];
   // --- .gitignore hygiene ---
-  const gitignorePath = path.join(root, '.gitignore');
+  const gitignorePath = path.join(c.root, '.gitignore');
   const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : null;
   const coversEnv =
     gitignore && gitignore.split('\n').some((l) => /^(\.env(\.\*)?|\*\.env|\.env\*)\s*$/.test(l.trim()));
   if (!coversEnv) {
-    findings.push({
+    out.push({
       id: 'gitignore-incomplete',
       severity: 'high',
       file: '.gitignore',
@@ -226,11 +359,14 @@ export function runGate(root, { quick = false } = {}) {
     });
   }
 
-  if (quick) return { findings, notes, inGit };
+    return out;
+  },
 
+  'env-example-leak': (c) => {
+    const out = [];
   // --- .env.example should contain shapes, not values ---
-  for (const rel of allFiles.filter(isEnvTemplate)) {
-    const content = read(rel);
+  for (const rel of c.allFiles.filter(isEnvTemplate)) {
+    const content = c.read(rel);
     if (content === null) continue;
     content.split('\n').forEach((lineText, i) => {
       const m = lineText.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']?([^"'\n#]*)/);
@@ -254,22 +390,26 @@ export function runGate(root, { quick = false } = {}) {
       if (!specific && /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return;
       if (!specific && /^eyJ[A-Za-z0-9_-]+\./.test(value)) return;
       if (specific || (value.length >= 12 && entropy(value) > 3.5)) {
-        seenSecretValues.add(value);
-        findings.push({
+        c.seenSecretValues.add(value);
+        out.push({
           id: 'env-example-leak',
           severity: 'high',
           file: rel,
           line: i + 1,
-          uncommitted: uncommitted.has(rel),
+          uncommitted: c.uncommitted.has(rel),
           detail: `\`${m[1]}\` has a real-looking value (\`${maskSecret(value)}\`).`,
         });
       }
     });
   }
+    return out;
+  },
 
+  'pii-data-files': (c) => {
+    const out = [];
   // --- real-looking personal data in tracked data files ---
-  for (const rel of allFiles.filter(isDataFile)) {
-    const content = read(rel);
+  for (const rel of c.allFiles.filter(isDataFile)) {
+    const content = c.read(rel);
     if (content === null) continue;
     const emails = realLookingEmails(content);
     SSN.lastIndex = 0;
@@ -278,31 +418,35 @@ export function runGate(root, { quick = false } = {}) {
       const parts = [];
       if (emails.length >= 3) parts.push(`${emails.length} distinct email addresses`);
       if (ssns.length > 0) parts.push(`${ssns.length} SSN-shaped values`);
-      findings.push({
+      out.push({
         id: 'pii-data-file', severity: 'high', file: rel,
-        uncommitted: uncommitted.has(rel), detail: parts.join(' and '),
+        uncommitted: c.uncommitted.has(rel), detail: parts.join(' and '),
       });
     }
   }
+    return out;
+  },
 
+  'secrets-in-history': (c) => {
+    const out = [];
   // --- secrets anywhere in git history, even if since deleted ---
-  if (inGit && hasCommits(root)) {
-    const remoteExists = hasRemote(root);
-    const currentBranch = branchNames(root)[0] || 'main';
+  if (c.inGit && hasCommits(c.root)) {
+    const remoteExists = hasRemote(c.root);
+    const currentBranch = branchNames(c.root)[0] || 'main';
     const seen = new Set();
     // One finding per file+commit, not per secret: two keys leaked in the
     // same .env in the same commit are one problem with one fix, and two
     // identical ten-line paragraphs read as "do this twice" to a beginner.
     const byLocation = new Map();
-    for (const { commit, file, text } of historyAddedLines(root)) {
-      if (ignored(file)) continue;
+    for (const { commit, file, text } of historyAddedLines(c.root)) {
+      if (c.ignored(file)) continue;
       for (const hit of findSecrets(text, { includeGeneric: false, docFile: isDocFile(file) })) {
         if (seen.has(hit.match)) continue;
         seen.add(hit.match);
         // Already reported from the working tree — that finding's advice
         // covers rotation, so a history duplicate is just noise. History
         // findings are for secrets that were *deleted* but still leak.
-        if (seenSecretValues.has(hit.match)) continue;
+        if (c.seenSecretValues.has(hit.match)) continue;
         const key = `${file}@${commit}`;
         const label = `${hit.name} (\`${maskSecret(hit.match)}\`)`;
         const existing = byLocation.get(key);
@@ -322,19 +466,18 @@ export function runGate(root, { quick = false } = {}) {
           detail: `${label} first added in commit ${commit}.`,
         };
         byLocation.set(key, finding);
-        findings.push(finding);
+        out.push(finding);
       }
     }
   }
+    return out;
+  },
 
-  // --- how this project is deployed: live credentials, storage, proxy routes ---
-  // Walks the working tree rather than git's index on purpose — the live
-  // `.env` is the subject of the first of these checks and is never tracked.
-  findings.push(...runInfraChecks(root, { ignored }));
-
+  'test-registry-present': (c) => {
+    const out = [];
   // --- generated test logins exist; the rules promise a launch-time reminder ---
-  if (fs.existsSync(path.join(root, '.shipclear', 'test-accounts.json'))) {
-    findings.push({
+  if (fs.existsSync(path.join(c.root, '.shipclear', 'test-accounts.json'))) {
+    out.push({
       id: 'test-registry-present',
       severity: 'info',
       file: '.shipclear/test-accounts.json',
@@ -342,30 +485,46 @@ export function runGate(root, { quick = false } = {}) {
       // commit these logins. Said here rather than as its own finding — the
       // registry existing is the normal, intended state and must not move the
       // verdict.
-      detail: uncommitted.has('.shipclear/test-accounts.json')
+      detail: c.uncommitted.has('.shipclear/test-accounts.json')
         ? 'Also worth one line of housekeeping: git is not ignoring this file, so a `git add -A` would commit it. Add `.shipclear/` to your .gitignore (or run `shipclear setup`, which does it for you).'
         : undefined,
     });
   }
+    return out;
+  },
 
+  'env-example-missing': (c) => {
+    const out = [];
   // --- .env exists but no template for teammates ---
-  if (fs.existsSync(path.join(root, '.env')) && !allFilesHasTemplate(root, allFiles)) {
-    findings.push({ id: 'env-example-missing', severity: 'info', file: '.env.example' });
+  if (fs.existsSync(path.join(c.root, '.env')) && !allFilesHasTemplate(c.root, c.allFiles)) {
+    out.push({ id: 'env-example-missing', severity: 'info', file: '.env.example' });
   }
+    return out;
+  },
 
-  // --- optional deeper scanners, used automatically when installed ---
-  if (hasBinary('gitleaks')) runGitleaks(root, findings, notes, ignored);
-  const osvRan = hasBinary('osv-scanner') && runOsvScanner(root, findings, notes);
+  // When gitleaks is installed it runs as a second opinion on top of the
+  // built-in patterns; anything it finds that we didn't becomes an extra
+  // secret-in-code finding. Its skip reason says it is optional.
+  'deep-secret-scan': (c) => {
+    const out = [];
+    runGitleaks(c.root, c.findings, out, c.notes, c.ignored);
+    return out;
+  },
 
-  // --- known-vulnerable dependencies (best effort, npm projects only) ---
-  if (osvRan) {
-    // covered above, across all ecosystems
-  } else if (fs.existsSync(path.join(root, 'package-lock.json'))) {
+  'dependency-vulns': (c) => {
+    const out = [];
+    // osv-scanner covers every ecosystem, so it takes precedence over the
+    // npm-only audit path when it is installed.
+    if (c.has('osv-scanner') && runOsvScanner(c.root, out, c.notes)) return out;
+    if (!fs.existsSync(path.join(c.root, 'package-lock.json'))) {
+      c.skip('osv-scanner is installed but could not run, and there is no package-lock.json to fall back on');
+      return out;
+    }
     try {
       let auditJson;
       try {
         auditJson = execFileSync('npm', ['audit', '--json'], {
-          cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60000,
+          cwd: c.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 60000,
         });
       } catch (err) {
         // npm audit exits non-zero when vulnerabilities exist; the JSON is
@@ -375,7 +534,7 @@ export function runGate(root, { quick = false } = {}) {
       const meta = JSON.parse(auditJson)?.metadata?.vulnerabilities || {};
       const serious = (meta.high || 0) + (meta.critical || 0);
       if (serious > 0) {
-        findings.push({
+        out.push({
           id: 'dependency-vulns',
           severity: 'high',
           file: 'package-lock.json',
@@ -383,29 +542,19 @@ export function runGate(root, { quick = false } = {}) {
         });
       }
     } catch {
-      notes.push('Could not run `npm audit` (offline or npm unavailable) — dependency check skipped.');
+      c.skip('`npm audit` could not run — you are offline, or npm is unavailable');
     }
-  } else if (fs.existsSync(path.join(root, 'package.json'))) {
-    notes.push('No package-lock.json, so the dependency vulnerability check was skipped. If your package.json has a "dependencies" section, run `npm install` once to create that file; otherwise there is nothing to do.');
-  } else {
-    // Non-npm project (Python, Ruby, Go, Rust, PHP…). The built-in check is
-    // npm-only; osv-scanner covers every ecosystem but isn't installed, so
-    // point the user at how to check their own stack rather than going
-    // silent — a vibe-coded Flask app can easily pin a flask version with
-    // known CVEs and never hear about it.
-    const PY = ['requirements.txt', 'Pipfile', 'pyproject.toml', 'poetry.lock'];
-    const other = { 'Gemfile': 'bundler-audit', 'go.mod': 'govulncheck', 'Cargo.toml': 'cargo audit', 'composer.json': 'composer audit' };
-    if (PY.some((f) => fs.existsSync(path.join(root, f)))) {
-      notes.push('This looks like a Python project. ShipClear\'s built-in dependency check is npm-only — to check your Python packages for known vulnerabilities, run `pip install pip-audit && pip-audit`, or install osv-scanner and ShipClear will use it automatically next time.');
-    } else {
-      const manifest = Object.keys(other).find((f) => fs.existsSync(path.join(root, f)));
-      if (manifest) {
-        notes.push(`Dependency check skipped — ShipClear's built-in check is npm-only. For this project, run \`${other[manifest]}\`, or install osv-scanner and ShipClear will check ${manifest} automatically next time.`);
-      }
-    }
-  }
+    return out;
+  },
+};
 
-  return { findings, notes, inGit };
+// The deployment checks live in infra.js; each is wired in by its id so it
+// reports its own status like every other check.
+for (const id of Object.keys(INFRA_RUNNERS)) {
+  RUNNERS[id] = (c) => {
+    if (!c.infra) c.infra = infraContext(c.root, { ignored: c.ignored });
+    return INFRA_RUNNERS[id](c.infra);
+  };
 }
 
 function allFilesHasTemplate(root, files) {

@@ -45,8 +45,16 @@ const isBroadPrefix = (route) => !route || /[*]$|\/$|^\/[^/]*$/.test(route);
  * Deployment-configuration findings for a project. Same shape as the rest of
  * the gate: { id, severity, file, line?, detail }.
  */
-export function runInfraChecks(root, { ignored = () => false } = {}) {
-  const findings = [];
+/**
+ * The shared groundwork every deployment check needs: the working-tree file
+ * list, a memoized reader, and whether this project looks like it is facing
+ * the public. Built once and handed to each check, so splitting them apart
+ * for the registry costs no extra walk of the tree.
+ *
+ * `liveCredentials` is filled in by the credential check and read by the
+ * silent-default one — see INFRA_RUNNERS below.
+ */
+export function infraContext(root, { ignored = () => false } = {}) {
   const files = walkFiles(root).filter((f) => !ignored(f) && isTextCandidate(f));
   const cache = new Map();
   const read = (rel) => {
@@ -63,13 +71,40 @@ export function runInfraChecks(root, { ignored = () => false } = {}) {
     if (signal) { production = `${signal} in \`${rel}\``; break; }
   }
 
-  const liveCredentials = inUseCredentials(files, read, production, findings);
-  silentDefaults(files, read, liveCredentials, findings);
-  publicStorage(files, read, findings);
-  proxyTopology(files, read, findings);
-  openDebugRoutes(files, read, findings);
-  headerCoverage(files, read, findings);
-  serverSideFetches(files, read, findings);
+  return { files, read, production, liveCredentials: [] };
+}
+
+/**
+ * One entry per deployment check, keyed by its registry id. Each takes the
+ * context above and returns only its own findings, so the gate can report
+ * per-check status instead of one undifferentiated block.
+ */
+export const INFRA_RUNNERS = {
+  'credential-in-use-is-public': (c) => {
+    const findings = [];
+    c.liveCredentials = inUseCredentials(c.files, c.read, c.production, findings);
+    return findings;
+  },
+  'secret-default-fallback': (c) => {
+    const findings = [];
+    silentDefaults(c.files, c.read, c.liveCredentials, findings);
+    return findings;
+  },
+  'public-bucket': (c) => { const f = []; publicStorage(c.files, c.read, f); return f; },
+  'proxy-exposes-service': (c) => { const f = []; proxyTopology(c.files, c.read, f); return f; },
+  'debug-route-public': (c) => { const f = []; openDebugRoutes(c.files, c.read, f); return f; },
+  'headers-html-uncovered': (c) => { const f = []; headerCoverage(c.files, c.read, f); return f; },
+  'ssrf-unchecked-fetch': (c) => { const f = []; serverSideFetches(c.files, c.read, f); return f; },
+};
+
+/**
+ * Every deployment check in one call, in the order the registry runs them.
+ * Kept because the gate's older callers and the tests use it directly.
+ */
+export function runInfraChecks(root, opts = {}) {
+  const ctx = infraContext(root, opts);
+  const findings = [];
+  for (const run of Object.values(INFRA_RUNNERS)) findings.push(...run(ctx));
   return findings;
 }
 
