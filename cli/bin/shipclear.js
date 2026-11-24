@@ -6,7 +6,8 @@ import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
 import { applyFixes, resetHistory, installHook, envExampleFrom, GITIGNORE_BLOCK } from '../lib/fix.js';
-import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT, banner, checkLine } from '../lib/report.js';
+import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT, banner, checkLine, checksHeading } from '../lib/report.js';
+import { REGISTRY } from '../lib/registry.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
 import { installBadge } from '../lib/badge.js';
@@ -128,6 +129,7 @@ function cmdScanStaged(root, quiet) {
 
 function cmdScan(root) {
   process.stdout.write(banner(pkg.version, { quick: true }));
+  console.log(checksHeading(REGISTRY.length));
   const { findings, notes, checks } = runGate(root, {
     quick: true,
     onCheck: (r) => console.log(checkLine(r)),
@@ -170,6 +172,7 @@ async function cmdShip(root, { fix = true, fixHistory = false, strict = false, p
   // and a frozen terminal is the one state that makes people kill the run.
   // Nothing here is paced — on a small project the whole list lands at once.
   process.stdout.write(banner(pkg.version));
+  console.log(checksHeading(REGISTRY.length));
   let { findings, notes, checks } = runGate(root, { onCheck: (r) => console.log(checkLine(r)) });
   const fixes = fix ? applyFixes(root, findings) : [];
 
