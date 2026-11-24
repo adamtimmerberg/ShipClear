@@ -18,6 +18,6 @@ ShipClear exists to help people who are new to software security. That spirit ex
 
 ## Enforcement
 
-Violations can be reported to **adamtimmerberg@gmail.com**. Reports are handled confidentially. Maintainers may remove comments, reject contributions, or ban contributors for behavior that violates this code.
+Violations can be reported to **adamtimmerbergnpm@gmail.com**. Reports are handled confidentially. Maintainers may remove comments, reject contributions, or ban contributors for behavior that violates this code.
 
 Adapted from the spirit of the [Contributor Covenant](https://www.contributor-covenant.org/), v2.1.

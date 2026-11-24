@@ -33,15 +33,7 @@ npx shipclear ship
 That runs the full gate and gives you a verdict:
 
 ```
-  +--------------------------------------------------+
-  |  ████ █  █ ████ ████   ████ █    ████  ██  ███   |
-  |  █    █  █  ██  █  █   █    █    █    █  █ █  █  |
-  |  ████ ████  ██  ████   █    █    ███  ████ ███   |
-  |     █ █  █  ██  █      █    █    █    █  █ █ █   |
-  |  ████ █  █ ████ █      ████ ████ ████ █  █ █  █  |
-  |                                                  |
-  |  v1.4.0 — ship report                            |
-  +--------------------------------------------------+
+  ShipClear v1.4.0 — ship report
   MIT · runs on your machine · nothing is uploaded
 
   Running 25 checks:
