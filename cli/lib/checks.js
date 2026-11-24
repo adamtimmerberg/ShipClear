@@ -56,16 +56,16 @@ export function runGate(root, { quick = false, onCheck = null } = {}) {
     if (quick && !entry.quick) {
       record = { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason: QUICK_SKIP_REASON };
     } else {
-      const reason = entry.skip ? entry.skip(c) : null;
-      if (reason) {
-        record = { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason };
+      const skipped = entry.skip ? entry.skip(c) : null;
+      if (skipped) {
+        record = { id: entry.id, label: entry.label, status: 'skipped', count: 0, ...asSkip(skipped) };
       } else {
         c.pendingSkip = null;
         const found = RUNNERS[entry.id](c);
         for (const f of found) Object.defineProperty(f, '_check', { value: entry.id, enumerable: false });
         c.findings.push(...found);
         record = c.pendingSkip
-          ? { id: entry.id, label: entry.label, status: 'skipped', count: 0, reason: c.pendingSkip }
+          ? { id: entry.id, label: entry.label, status: 'skipped', count: 0, ...asSkip(c.pendingSkip) }
           : { id: entry.id, label: entry.label, status: found.length ? 'findings' : 'passed', count: found.length };
       }
     }
@@ -78,6 +78,9 @@ export function runGate(root, { quick = false, onCheck = null } = {}) {
 
   return { findings: c.findings, notes: c.notes, inGit: c.inGit, checks: c.checks };
 }
+
+/** A skip is a plain reason, or a reason plus the steps that would turn the check on. */
+const asSkip = (s) => (typeof s === 'string' ? { reason: s, steps: [] } : { reason: s.reason, steps: s.steps || [] });
 
 /**
  * Everything the checks share: the two file lists, a memoized reader, and the

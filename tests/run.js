@@ -1661,6 +1661,8 @@ console.log('\ncheck registry');
   const deps = checks.find((c) => c.id === 'dependency-vulns');
   check('a project with no lockfile reports the dependency check as skipped', deps.status === 'skipped', deps.status);
   check('...and says the dependencies were not checked', /not checked/.test(deps.reason), deps.reason);
+  check('...and gives the command that turns the check on', deps.steps.some((x) => x.includes('`npm install`')), (deps.steps || []).join(' | '));
+  check('...and says to run the gate again afterwards', deps.steps.some((x) => /shipclear ship/.test(x)));
   fs.rmSync(dir, { recursive: true, force: true });
 
   // pnpm/yarn/bun projects must never be told to run `npm install` — it would
@@ -1674,6 +1676,13 @@ console.log('\ncheck registry');
       d.status === 'skipped' && d.reason.includes(manager), d.reason);
     check(`...and is warned off \`npm install\`, which would add a second lockfile`,
       /Do not run `npm install`/.test(d.reason), d.reason);
+    // The whole point of naming the manager: hand them a command that works
+    // now, and the one install that fixes it for every future run.
+    check(`...and is given a ${manager} command it can run right now`,
+      d.steps.some((x) => x.includes(manager === 'yarn' ? 'yarn' : `${manager} audit`)), (d.steps || []).join(' | '));
+    check('...and told how to install osv-scanner',
+      d.steps.some((x) => /brew install osv-scanner/.test(x))
+      && d.steps.some((x) => /osv-scanner\/releases/.test(x)));
     fs.rmSync(alt, { recursive: true, force: true });
   }
 
@@ -1745,6 +1754,23 @@ console.log('\nship report output');
   })());
   check('a quick scan tells you to run the full gate', /shipclear ship/.test(render('CLEARED', { quick: true })));
   check('a quick scan never claims work is finished', !/with work still to do/.test(render('CLEARED', { quick: true })));
+
+  // Install steps belong under a check that did not run, and nowhere else.
+  const withSteps = [{ id: 'd', label: 'Known-vulnerable dependencies', status: 'skipped', count: 0,
+    reason: 'no package-lock.json, so your dependencies were not checked for known vulnerabilities.',
+    steps: ['Create the file npm reads, which also installs your packages: `npm install`', 'Then run `shipclear ship` again.'] }];
+  const stepped = renderTerminal({ findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0', checks: withSteps });
+  check('a skipped check prints the steps that would turn it on', stepped.includes('To check them:'));
+  check('...including the literal command', stepped.includes('`npm install`'));
+  check('...unbroken by the line wrapper, so it can be copied',
+    stepped.split('\n').some((l) => l.includes('`npm install`')), 'command was split across lines');
+  check('a check that ran prints no install steps', !renderTerminal({
+    findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0',
+    checks: [{ id: 'd', label: 'Known-vulnerable dependencies', status: 'passed', count: 0 }],
+  }).includes('To check them:'));
+  check('the markdown report carries the steps too', renderMarkdown({
+    findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0', checks: withSteps,
+  }).includes('To check them:'));
 
   // Colour: markers and the verdict line only. Everything else stays plain so
   // a pipe, a CI job and an AI reading stdout all see the same bytes.

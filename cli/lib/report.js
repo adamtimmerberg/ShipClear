@@ -326,25 +326,33 @@ export function tallyLine(checks) {
     + (skipped ? ` · ${skipped} skipped` : '');
 }
 
-/** Soft-wrap prose to a terminal width, with a hanging indent for the rest. */
+/**
+ * Soft-wrap prose to a terminal width, with a hanging indent for the rest.
+ *
+ * A command in backticks is never broken across lines: these are meant to be
+ * copied, and `npm\ninstall` is not a command. Spaces inside backticks are
+ * held together while the words are measured, then restored.
+ */
 function wrap(text, { width = 78, first = '', rest = '' } = {}) {
+  const HOLD = '\u0000';
+  const held = text.replace(/`[^`]*`/g, (m) => m.replace(/ /g, HOLD));
   const out = [];
   let line = null;
-  for (const word of text.split(/\s+/)) {
+  for (const word of held.split(/\s+/)) {
     if (line === null) { line = first + word; continue; }
     if (`${line} ${word}`.length > width) { out.push(line); line = rest + word; }
     else line = `${line} ${word}`;
   }
   if (line) out.push(line);
-  return out;
+  return out.map((l) => l.split(HOLD).join(' '));
 }
 
 /** Skipped checks keyed by the reason they share, in registry order. */
 function groupByReason(skipped) {
   const groups = new Map();
   for (const c of skipped) {
-    if (!groups.has(c.reason)) groups.set(c.reason, []);
-    groups.get(c.reason).push(c.label);
+    if (!groups.has(c.reason)) groups.set(c.reason, { labels: [], steps: c.steps || [] });
+    groups.get(c.reason).labels.push(c.label);
   }
   return groups;
 }
@@ -362,12 +370,23 @@ export function skippedSection(checks) {
   // Checks skipped for the same reason are grouped. A quick scan leaves most
   // of the registry unrun for one reason, and eighteen copies of the same
   // sentence is how a reader learns to skip this section entirely.
-  for (const [reason, labels] of groupByReason(skipped)) {
+  for (const [reason, { labels, steps }] of groupByReason(skipped)) {
     if (labels.length > 2) {
       lines.push(...wrap(`${labels.length} checks — ${reason}`, { first: '   – ', rest: '     ' }));
       lines.push(...wrap(labels.join(' · '), { first: '     ', rest: '     ' }));
     } else {
       for (const label of labels) lines.push(...wrap(`${label}: ${reason}`, { first: '   – ', rest: '     ' }));
+    }
+    // The steps that would turn the check on, printed only here — under a
+    // check that did not run. Indented commands are left unwrapped so they
+    // stay copy-pasteable.
+    if (steps.length) {
+      lines.push('     To check them:');
+      for (const step of steps) {
+        lines.push(...(step.startsWith('  ') || step.length <= 72
+          ? [`       ${step}`]
+          : wrap(step, { first: '       ', rest: '       ' })));
+      }
     }
   }
   return lines;
@@ -529,10 +548,17 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     if (skipped.length) {
       out.push('### Not checked here');
       out.push('');
-      for (const [reason, labels] of groupByReason(skipped)) {
+      for (const [reason, { labels, steps }] of groupByReason(skipped)) {
         out.push(labels.length > 2
           ? `- **${labels.length} checks** — ${reason}\n  - ${labels.join('\n  - ')}`
           : labels.map((l) => `- **${l}** — ${reason}`).join('\n'));
+        if (steps.length) {
+          out.push('');
+          out.push('  To check them:');
+          out.push('');
+          for (const step of steps) out.push(`  - ${step.trim()}`);
+          out.push('');
+        }
       }
       out.push('');
     }

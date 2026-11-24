@@ -31,23 +31,74 @@ const OTHER_MANIFESTS = {
   'composer.json': 'composer audit',
 };
 
+// Installing osv-scanner is the one move that fixes every ecosystem at once:
+// ShipClear picks it up automatically on the next run, no flags, no config.
+// Three routes because the audience spans a Mac with Homebrew, a Go
+// developer, and someone on Windows who has never installed a binary.
+const OSV_INSTALL = [
+  'Or install osv-scanner once and ShipClear checks your dependencies every run from then on:',
+  '  • macOS or Linux with Homebrew: `brew install osv-scanner`',
+  '  • If you have Go: `go install github.com/google/osv-scanner/cmd/osv-scanner@latest`',
+  '  • Windows, or neither of those: download it from',
+  '    https://github.com/google/osv-scanner/releases and put it somewhere on your PATH',
+];
+const THEN_RERUN = 'Then run `shipclear ship` again — the check will be in the list.';
+
+// What the user can actually type, per situation. Printed only when the
+// check did not run, because a list of install steps under a check that
+// already ran is noise.
+const AUDIT_COMMAND = {
+  pnpm: '`pnpm audit`',
+  yarn: '`yarn npm audit` (on Yarn 1, it is `yarn audit`)',
+  bun: '`bun audit`, if your version of Bun has it',
+};
+
 function dependencySkip(ctx) {
   if (ctx.has('osv-scanner')) return null;
   if (exists(ctx.root, 'package-lock.json')) return null;
 
   const alt = Object.keys(ALT_LOCKFILES).find((f) => fs.existsSync(path.join(ctx.root, f)));
   if (alt) {
-    return `this project uses ${ALT_LOCKFILES[alt]}, and ShipClear's built-in dependency check reads npm's package-lock.json only — so your dependencies were not checked for known vulnerabilities. Install osv-scanner and ShipClear will check them automatically next run. (Do not run \`npm install\` to create a package-lock.json here: it would add a second, competing lockfile to a ${ALT_LOCKFILES[alt]} project.)`;
+    const manager = ALT_LOCKFILES[alt];
+    return {
+      reason: `this project uses ${manager}, and ShipClear's built-in dependency check reads npm's package-lock.json only — so your dependencies were not checked for known vulnerabilities. (Do not run \`npm install\` to create a package-lock.json here: it would add a second, competing lockfile to a ${manager} project.)`,
+      steps: [
+        `Right now, with nothing to install: ${AUDIT_COMMAND[manager]}`,
+        ...OSV_INSTALL,
+        THEN_RERUN,
+      ],
+    };
   }
   if (exists(ctx.root, 'package.json')) {
-    return 'no package-lock.json, so your dependencies were not checked for known vulnerabilities. If your package.json has a "dependencies" section, run `npm install` once to create that file; otherwise there is nothing to check.';
+    return {
+      reason: 'no package-lock.json, so your dependencies were not checked for known vulnerabilities.',
+      steps: [
+        'Create the file npm reads, which also installs your packages: `npm install`',
+        'Then run `shipclear ship` again — the check runs on its own from then on.',
+        '(If your package.json has no "dependencies" section, there is genuinely nothing to check.)',
+      ],
+    };
   }
   if (PY_MANIFESTS.some((f) => fs.existsSync(path.join(ctx.root, f)))) {
-    return 'this looks like a Python project and ShipClear\'s built-in dependency check is npm-only, so your packages were not checked for known vulnerabilities. Run `pip install pip-audit && pip-audit`, or install osv-scanner and ShipClear will check them automatically next run.';
+    return {
+      reason: "this looks like a Python project and ShipClear's built-in dependency check is npm-only, so your packages were not checked for known vulnerabilities.",
+      steps: [
+        'Right now: `pip install pip-audit` then `pip-audit` in this folder',
+        ...OSV_INSTALL,
+        THEN_RERUN,
+      ],
+    };
   }
   const manifest = Object.keys(OTHER_MANIFESTS).find((f) => fs.existsSync(path.join(ctx.root, f)));
   if (manifest) {
-    return `ShipClear's built-in dependency check is npm-only, so the packages in ${manifest} were not checked for known vulnerabilities. Run \`${OTHER_MANIFESTS[manifest]}\`, or install osv-scanner and ShipClear will check them automatically next run.`;
+    return {
+      reason: `ShipClear's built-in dependency check is npm-only, so the packages in ${manifest} were not checked for known vulnerabilities.`,
+      steps: [
+        `Right now: \`${OTHER_MANIFESTS[manifest]}\` in this folder`,
+        ...OSV_INSTALL,
+        THEN_RERUN,
+      ],
+    };
   }
   return 'no dependency manifest found in this project, so there is nothing to check.';
 }
@@ -56,6 +107,9 @@ function dependencySkip(ctx) {
  * One entry per check.
  *   id     — stable key; also the key of its runner in checks.js
  *   label  — what the user sees on the progress line
+ *   skip   — null, a reason string, or { reason, steps } where steps are the
+ *            literal commands that would turn this check on. Steps print only
+ *            when the check did not run.
  *   emits  — every finding id this check can raise (pinned by a drift test
  *            against report.js's EXPLAIN, so a new finding cannot be added
  *            without being attributed to a check)
