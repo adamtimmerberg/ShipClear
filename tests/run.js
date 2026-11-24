@@ -1867,9 +1867,26 @@ console.log('\nship report output');
   process.stdout.isTTY = true;
   try {
     const tinted = render('DO_NOT_SHIP');
-    const ansiLines = tinted.split('\n').filter((l) => /\x1b\[/.test(l));
-    check('only the verdict line is tinted', ansiLines.length === 1 && ansiLines[0].includes('DO NOT SHIP'),
+    const lines = tinted.split('\n');
+    const ansiLines = lines.filter((l) => /\x1b\[/.test(l));
+    check('the verdict line is tinted', ansiLines.filter((l) => l.includes('DO NOT SHIP')).length === 1,
       ansiLines.join(' | '));
+    // The skipped block is yellow throughout, matching the [–] markers it
+    // explains — it is what the verdict has to be weighed against.
+    check('the not-checked-here block is yellow throughout', (() => {
+      const start = lines.findIndex((l) => l.includes('Not checked here'));
+      if (start === -1) return false;
+      const rest = lines.slice(start);
+      const end = rest.findIndex((l, i) => i > 0 && /─{10,}/.test(l));
+      const block = rest.slice(0, end === -1 ? rest.length : end).filter((l) => l.trim());
+      return block.length >= 2 && block.every((l) => l.includes('\x1b[33m'));
+    })());
+    // Still the guard it always was: nothing else may be coloured.
+    check('nothing outside the verdict and that block is tinted',
+      ansiLines.every((l) => l.includes('\x1b[33m') || l.includes('DO NOT SHIP')),
+      ansiLines.filter((l) => !l.includes('\x1b[33m') && !l.includes('DO NOT SHIP')).join(' | '));
+    check('the findings and the disclaimer stay plain',
+      !/\x1b\[/.test(lines.filter((l) => /Disclaimer:|why it matters:/.test(l)).join('\n')));
     check('check markers are coloured', /\x1b\[32m/.test(checkLine(CHECKS[0])) && /\x1b\[33m/.test(checkLine(CHECKS[2])));
     check('a check that found something is red', /\x1b\[31m/.test(checkLine(CHECKS[1])));
   } finally {

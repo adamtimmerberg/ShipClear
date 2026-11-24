@@ -395,7 +395,10 @@ export function skippedSection(checks) {
       }
     }
   }
-  return lines;
+  // Yellow throughout, matching the [–] marker these lines explain. This is
+  // the one block a reader has to weigh the verdict against, and in a long
+  // report it was plain text sitting between the verdict and the next steps.
+  return lines.map((l) => color('33', l));
 }
 
 export function verdictOf(findings) {
