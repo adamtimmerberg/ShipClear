@@ -6,7 +6,7 @@ import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../lib/checks.js';
 import { applyFixes, resetHistory, installHook, envExampleFrom, GITIGNORE_BLOCK } from '../lib/fix.js';
-import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT } from '../lib/report.js';
+import { renderTerminal, renderMarkdown, verdictOf, VERDICT_TEXT, banner, checkLine } from '../lib/report.js';
 import { findSecrets, maskSecret, lineOfIndex } from '../lib/patterns.js';
 import { isGitRepo, stagedFiles, stagedContent } from '../lib/git.js';
 import { installBadge } from '../lib/badge.js';
@@ -127,9 +127,13 @@ function cmdScanStaged(root, quiet) {
 }
 
 function cmdScan(root) {
-  const { findings, notes } = runGate(root, { quick: true });
+  process.stdout.write(banner(pkg.version, { quick: true }));
+  const { findings, notes, checks } = runGate(root, {
+    quick: true,
+    onCheck: (r) => console.log(checkLine(r)),
+  });
   const verdict = verdictOf(findings);
-  console.log(renderTerminal({ findings, notes, verdict, version: pkg.version, quick: true }));
+  console.log(renderTerminal({ findings, notes, verdict, version: pkg.version, quick: true, checks }));
   return findings.some((f) => f.severity === 'critical') ? 1 : 0;
 }
 
@@ -161,7 +165,12 @@ async function confirmProbe(url) {
 }
 
 async function cmdShip(root, { fix = true, fixHistory = false, strict = false, probeUrl = null, assumeYes = false } = {}) {
-  let { findings, notes } = runGate(root);
+  // Printed as each check finishes rather than collected and dumped at the
+  // end: on a large repo the history scan and `npm audit` take real seconds,
+  // and a frozen terminal is the one state that makes people kill the run.
+  // Nothing here is paced — on a small project the whole list lands at once.
+  process.stdout.write(banner(pkg.version));
+  let { findings, notes, checks } = runGate(root, { onCheck: (r) => console.log(checkLine(r)) });
   const fixes = fix ? applyFixes(root, findings) : [];
 
   if (fixHistory) {
@@ -169,8 +178,10 @@ async function cmdShip(root, { fix = true, fixHistory = false, strict = false, p
     if (done) {
       fixes.push(done);
       // History is gone — re-run the gate so the verdict reflects the
-      // repo as it now is, not as it was before the reset.
-      ({ findings, notes } = runGate(root));
+      // repo as it now is, not as it was before the reset. No onCheck: the
+      // progress lines were printed by the first run and repeating them
+      // would read as the gate having run twice for no reason.
+      ({ findings, notes, checks } = runGate(root));
     } else {
       notes.push(`--fix-history was not applied: ${refused}`);
     }
@@ -196,7 +207,7 @@ async function cmdShip(root, { fix = true, fixHistory = false, strict = false, p
   if (strict && verdict !== 'CLEARED') {
     notes.push('--strict: failing because the verdict is not CLEARED. Fix the findings above; a ShipClear badge stays red until they are gone.');
   }
-  const result = { findings, notes, verdict, fixes, version: pkg.version };
+  const result = { findings, notes, verdict, fixes, version: pkg.version, checks };
   fs.writeFileSync(path.join(root, 'SHIP-REPORT.md'), renderMarkdown(result));
   console.log(renderTerminal(result));
   if (strict) return verdict === 'CLEARED' ? 0 : 1;

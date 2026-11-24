@@ -8,8 +8,9 @@ import http from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
+import { REGISTRY } from '../cli/lib/registry.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
-import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
+import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN, banner, checkLine, tallyLine, nextSteps, DISCLAIMER, SEMANTIC_CHECKS } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
 import { runProbe, normalizeBase } from '../cli/lib/probe.js';
@@ -1609,6 +1610,209 @@ console.log('\npersonal-path volume');
     found.some((f) => f.file === 'bundle.js' && /400 occurrences/.test(f.detail)));
   check('a file with a single hit carries no occurrence count',
     found.some((f) => f.file === 'one.py' && !/occurrences/.test(f.detail)));
+}
+
+// A bare git repo with nothing in it — the registry tests care about which
+// checks run, not about what they find.
+function emptyRepo(tag) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `shipclear-${tag}-`));
+  execFileSync('git', ['-c', 'user.email=t@shipclear.local', '-c', 'user.name=T',
+    '-c', 'commit.gpgsign=false', 'init', '-q', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
+  return dir;
+}
+
+// --- the check registry: the number of checks is counted, never claimed ---
+//
+// The README once said 22 and the wiki said 23, because both were counted by
+// hand. These guards make the registry the only place the answer lives, and
+// make it impossible to add a finding without attributing it to a check.
+console.log('\ncheck registry');
+{
+  const ids = REGISTRY.map((c) => c.id);
+  check('every check has a unique id', new Set(ids).size === ids.length);
+  check('every check has a label a non-developer can read',
+    REGISTRY.every((c) => typeof c.label === 'string' && c.label.length > 3));
+
+  const claimed = new Set(REGISTRY.flatMap((c) => c.emits));
+  const explained = Object.keys(EXPLAIN);
+  const unclaimed = explained.filter((id) => !claimed.has(id));
+  check('every finding id belongs to a check in the registry', unclaimed.length === 0, unclaimed.join(', '));
+  const unexplained = [...claimed].filter((id) => !explained.includes(id));
+  check('every id a check can emit has an explanation', unexplained.length === 0, unexplained.join(', '));
+
+  // The count is read, not written down. A hardcoded number here would
+  // recreate the drift this registry exists to kill.
+  const dir = emptyRepo('reg-count');
+  fs.writeFileSync(path.join(dir, 'app.js'), 'const x = 1;\n');
+  // A package.json with no lockfile: npm audit has nothing to read, so the
+  // dependencies really are unchecked — as opposed to a project with no
+  // manifest at all, where there is genuinely nothing to check.
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","dependencies":{"left-pad":"1.3.0"}}\n');
+  const { checks } = runGate(dir);
+  check('the gate reports one result per registered check', checks.length === REGISTRY.length);
+  check('every result carries a status', checks.every((c) => ['passed', 'findings', 'skipped'].includes(c.status)));
+  check('every skipped check says why, in a sentence', checks.filter((c) => c.status === 'skipped')
+    .every((c) => typeof c.reason === 'string' && c.reason.length > 20));
+  check('a skipped check is never counted as passed',
+    !checks.some((c) => c.status === 'skipped' && c.count > 0));
+
+  // The reason this exists: a project with no npm lockfile has had its
+  // dependencies checked by nothing, and must not be told otherwise.
+  const deps = checks.find((c) => c.id === 'dependency-vulns');
+  check('a project with no lockfile reports the dependency check as skipped', deps.status === 'skipped', deps.status);
+  check('...and says the dependencies were not checked', /not checked/.test(deps.reason), deps.reason);
+  check('...and gives the command that turns the check on', deps.steps.some((x) => x.includes('`npm install`')), (deps.steps || []).join(' | '));
+  check('...and says to run the gate again afterwards', deps.steps.some((x) => /shipclear ship/.test(x)));
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  // pnpm/yarn/bun projects must never be told to run `npm install` — it would
+  // add a second, competing lockfile to their repo.
+  for (const [lock, manager] of [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['bun.lockb', 'bun']]) {
+    const alt = emptyRepo(`reg-${manager}`);
+    fs.writeFileSync(path.join(alt, 'package.json'), '{"name":"x"}\n');
+    fs.writeFileSync(path.join(alt, lock), '\n');
+    const d = runGate(alt).checks.find((c) => c.id === 'dependency-vulns');
+    check(`a ${manager} project is told its dependencies were not checked`,
+      d.status === 'skipped' && d.reason.includes(manager), d.reason);
+    check(`...and is warned off \`npm install\`, which would add a second lockfile`,
+      /Do not run `npm install`/.test(d.reason), d.reason);
+    // The whole point of naming the manager: hand them a command that works
+    // now, and the one install that fixes it for every future run.
+    check(`...and is given a ${manager} command it can run right now`,
+      d.steps.some((x) => x.includes(manager === 'yarn' ? 'yarn' : `${manager} audit`)), (d.steps || []).join(' | '));
+    check('...and told how to install osv-scanner',
+      d.steps.some((x) => /brew install osv-scanner/.test(x))
+      && d.steps.some((x) => /osv-scanner\/releases/.test(x)));
+    fs.rmSync(alt, { recursive: true, force: true });
+  }
+
+  // A quick scan runs a deliberate subset; saying so is the whole point.
+  const q = emptyRepo('reg-quick');
+  const quick = runGate(q, { quick: true }).checks;
+  check('a quick scan still reports every check, skipped ones included', quick.length === REGISTRY.length);
+  check('a quick scan skips the full-gate checks with a reason naming `shipclear ship`',
+    quick.filter((c) => c.status === 'skipped').some((c) => /shipclear ship/.test(c.reason)));
+  check('a quick scan runs fewer checks than the full gate',
+    quick.filter((c) => c.status !== 'skipped').length < REGISTRY.length);
+  fs.rmSync(q, { recursive: true, force: true });
+
+  // onCheck is what lets the CLI print progress as it happens.
+  const live = emptyRepo('reg-live');
+  const seen = [];
+  runGate(live, { onCheck: (r) => seen.push(r.id) });
+  check('onCheck fires once per check, in registry order', seen.join(',') === REGISTRY.map((c) => c.id).join(','));
+  fs.rmSync(live, { recursive: true, force: true });
+}
+
+// --- the ship report's own output ---
+console.log('\nship report output');
+{
+  const CHECKS = [
+    { id: 'a', label: 'Check A', status: 'passed', count: 0 },
+    { id: 'b', label: 'Check B', status: 'findings', count: 2 },
+    { id: 'c', label: 'Check C', status: 'skipped', count: 0, reason: 'no package-lock.json, so your dependencies were not checked' },
+  ];
+  const render = (verdict, extra = {}) => renderTerminal({
+    findings: [], notes: [], verdict, version: '9.9.9', checks: CHECKS, ...extra,
+  });
+
+  // The banner version is read at runtime, never written down.
+  check('the banner prints the version it was given', banner('4.5.6').includes('ShipClear v4.5.6'));
+  check('the banner says where this runs', /runs on your machine/.test(banner('1.0.0')));
+
+  check('a passed check is marked with a tick', checkLine(CHECKS[0]).includes('[✓]'));
+  check('a check that found something is marked, and says how many',
+    checkLine(CHECKS[1]).includes('[✗]') && /2 to look at/.test(checkLine(CHECKS[1])));
+  check('a skipped check is marked apart from both', checkLine(CHECKS[2]).includes('[–]'));
+  check('the tally counts what ran, not what exists', tallyLine(CHECKS) === '  2 of 3 checks ran · 1 skipped');
+
+  // The honesty requirements, verdict by verdict.
+  const cleared = render('CLEARED');
+  check('a clear verdict says there is work still to do', cleared.includes('CLEARED TO SHIP — with work still to do'));
+  check('...and names what the automated checks cannot see', /whether every route checks who you are/.test(cleared));
+  check('...and counts the outstanding semantic checks from the list itself',
+    cleared.includes(`${SEMANTIC_CHECKS.length} checks are still outstanding`));
+  check('...and still offers the badge', cleared.includes('shipclear badge'));
+
+  for (const verdict of ['CLEARED', 'SHIP_WITH_FIXES', 'DO_NOT_SHIP']) {
+    const out = render(verdict);
+    check(`${verdict}: the tally is printed with the verdict`, out.includes('2 of 3 checks ran'));
+    check(`${verdict}: what was not checked is repeated next to the verdict`,
+      out.includes('Not checked here:') && out.includes('dependencies were not checked'));
+    check(`${verdict}: the disclaimer prints`, out.includes(DISCLAIMER[0]));
+    check(`${verdict}: the disclaimer calls ShipClear a supplement, not a substitute`,
+      /supplement to\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
+  }
+
+  // Next steps, and the guardrail that has to survive a copy-paste.
+  const bad = render('DO_NOT_SHIP');
+  check('a blocking verdict puts key rotation first', /1\. Rotate the keys/.test(bad));
+  check('...and hands over a prompt for the user\'s AI', bad.includes('Read SHIP-REPORT.md in this project'));
+  check('...with the guardrail inside the quoted prompt, where a copy will take it', (() => {
+    const quoted = bad.slice(bad.indexOf('"Read SHIP-REPORT.md'), bad.indexOf('run it myself."'));
+    return /Don't rewrite git history/.test(quoted) && /--fix-history or --probe/.test(quoted);
+  })());
+  check('a quick scan tells you to run the full gate', /shipclear ship/.test(render('CLEARED', { quick: true })));
+  check('a quick scan never claims work is finished', !/with work still to do/.test(render('CLEARED', { quick: true })));
+
+  // Install steps belong under a check that did not run, and nowhere else.
+  const withSteps = [{ id: 'd', label: 'Known-vulnerable dependencies', status: 'skipped', count: 0,
+    reason: 'no package-lock.json, so your dependencies were not checked for known vulnerabilities.',
+    steps: ['Create the file npm reads, which also installs your packages: `npm install`', 'Then run `shipclear ship` again.'] }];
+  const stepped = renderTerminal({ findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0', checks: withSteps });
+  check('a skipped check prints the steps that would turn it on', stepped.includes('To check them:'));
+  check('...including the literal command', stepped.includes('`npm install`'));
+  check('...unbroken by the line wrapper, so it can be copied',
+    stepped.split('\n').some((l) => l.includes('`npm install`')), 'command was split across lines');
+  check('a check that ran prints no install steps', !renderTerminal({
+    findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0',
+    checks: [{ id: 'd', label: 'Known-vulnerable dependencies', status: 'passed', count: 0 }],
+  }).includes('To check them:'));
+  check('the markdown report carries the steps too', renderMarkdown({
+    findings: [], notes: [], verdict: 'CLEARED', version: '1.0.0', checks: withSteps,
+  }).includes('To check them:'));
+
+  // Colour: markers and the verdict line only. Everything else stays plain so
+  // a pipe, a CI job and an AI reading stdout all see the same bytes.
+  const wasTTY = process.stdout.isTTY;
+  process.stdout.isTTY = true;
+  try {
+    const tinted = render('DO_NOT_SHIP');
+    const ansiLines = tinted.split('\n').filter((l) => /\x1b\[/.test(l));
+    check('only the verdict line is tinted', ansiLines.length === 1 && ansiLines[0].includes('DO NOT SHIP'),
+      ansiLines.join(' | '));
+    check('check markers are coloured', /\x1b\[32m/.test(checkLine(CHECKS[0])) && /\x1b\[33m/.test(checkLine(CHECKS[2])));
+    check('a check that found something is red', /\x1b\[31m/.test(checkLine(CHECKS[1])));
+  } finally {
+    process.stdout.isTTY = wasTTY;
+  }
+  check('with no terminal attached nothing is coloured', !/\x1b\[/.test(render('DO_NOT_SHIP')));
+
+  // The markdown report has to agree with the terminal, because it is the
+  // artifact people forward to someone else.
+  const md = renderMarkdown({ findings: [], notes: [], verdict: 'CLEARED', version: '9.9.9', checks: CHECKS });
+  check('the report carries the same verdict wording', md.includes('CLEARED TO SHIP — with work still to do'));
+  check('the report lists every check with its result', md.includes('**2 of 3 checks ran**') && md.includes('| – | Check C | not run |'));
+  check('the report repeats why a check did not run', md.includes('### Not checked here'));
+  check('the report carries the next steps', md.includes('## What to do next'));
+  check('the report carries the full disclaimer', /not a substitute for review by a qualified security professional/.test(md));
+  check('the semantic checklist comes from the shared list',
+    SEMANTIC_CHECKS.every((item) => md.includes(`- [ ] ${item}`)));
+}
+
+// --- the docs may not claim a number the code does not report ---
+//
+// The README said 22 and the wiki said 23, both hand-counted, neither
+// matching anything enumerable. These read the real values.
+console.log('\ndocumented counts');
+{
+  const readme = fs.readFileSync(path.join(here, '../README.md'), 'utf8');
+  check(`the README's check count matches the registry (${REGISTRY.length})`,
+    readme.includes(`${REGISTRY.length} deterministic checks`),
+    (readme.match(/\d+ deterministic checks/) || ['not found'])[0]);
+  check(`the README's semantic count matches the checklist (${SEMANTIC_CHECKS.length})`,
+    readme.includes(`${SEMANTIC_CHECKS.length}-point semantic checklist`),
+    (readme.match(/[\w-]+-point semantic checklist/) || ['not found'])[0]);
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
