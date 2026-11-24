@@ -7,7 +7,7 @@ ShipClear is a security tool, so we hold ourselves to the standard we ask of oth
 If you find a vulnerability in ShipClear itself — a bypass of the commit guard, a pattern-evasion technique, a case where the gate says SAFE when it shouldn't — please report it privately:
 
 1. **Preferred:** use GitHub's private vulnerability reporting — the **Security** tab of this repository → *Report a vulnerability*.
-2. If that isn't possible, email **adamtimmerberg@gmail.com** with `[ShipClear Security]` in the subject.
+2. If that isn't possible, email **adamtimmerbergnpm@gmail.com** with `[ShipClear Security]` in the subject.
 
 Please include reproduction steps and, if you can, a minimal fixture file that demonstrates the issue.
 
