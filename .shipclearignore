@@ -1,3 +1,8 @@
 # Paths ShipClear should not scan in this repository.
 # The fixtures are deliberately-vulnerable sample apps used by the test suite.
 tests/fixtures/
+# The suite itself carries fake secrets inline as check inputs — a dummy
+# private key, a dummy JWT secret, a dummy GitLab PAT. Same category as the
+# fixtures. gitleaks always flagged these; until v1.5.1 its findings were
+# being discarded by a bug, so the self-gate passed without them.
+tests/run.js

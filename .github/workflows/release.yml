@@ -61,7 +61,18 @@ jobs:
           fi
           echo "publishing shipclear@$version"
 
-      # Nothing gets published that wouldn't pass its own gate.
+      # Nothing gets published that wouldn't pass its own gate — including the
+      # optional-tool paths. Without gitleaks here, `npm test` skips the
+      # deep-secret-scan runner entirely, which is how v1.5.0 was published
+      # with that runner crashing the gate. See the same step in ci.yml.
+      - name: Install gitleaks (so the deep-secret-scan path is covered)
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+        env:
+          GITLEAKS_VERSION: 8.30.1
+
       - run: npm test
       - run: npm run check:adapters
       - name: ShipClear clears its own repo

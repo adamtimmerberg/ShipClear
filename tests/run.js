@@ -1771,6 +1771,39 @@ console.log('\ncheck registry');
     }
   }
 
+  // A runner returns findings, and notes go to the notes array. The gitleaks
+  // runner used to push its "gitleaks also ran" note into the findings, where
+  // runGate's Object.defineProperty crashed on a string: `shipclear ship`
+  // died before writing a report on every machine with gitleaks installed.
+  // The same arity bug called the ignore predicate on an array, so the first
+  // real leak gitleaks found was swallowed — a false CLEARED TO SHIP.
+  {
+    const r = emptyRepo('reg-gitleaks-plumbing');
+    // A live-format token ShipClear's own patterns do not match, so gitleaks
+    // is the only thing standing between this repo and a cleared verdict.
+    fs.writeFileSync(path.join(r, 'app.js'), 'const t = "glpat-ABCDEFGHIJKLMNOPQRST";\n');
+    const g = runGate(r);
+    const bad = g.findings.filter((f) => !f || typeof f !== 'object');
+    check('every finding the gate returns is an object, never a bare note string',
+      bad.length === 0, JSON.stringify(bad));
+    check('every note the gate returns is a string, not a finding',
+      g.notes.every((n) => typeof n === 'string'));
+
+    const deep = g.checks.find((c) => c.id === 'deep-secret-scan');
+    if (deep.status !== 'skipped') {
+      check('a secret only gitleaks can see reaches the findings',
+        g.findings.some((f) => /found by gitleaks/.test(f.detail || '')),
+        JSON.stringify(g.findings));
+      check('...and is counted against the gitleaks check that found it',
+        deep.status === 'findings' && deep.count >= 1, JSON.stringify(deep));
+      check('...and flips the verdict, rather than clearing the repo',
+        verdictOf(g.findings) === 'DO_NOT_SHIP', verdictOf(g.findings));
+      check('...and the run is noted once, in the notes',
+        g.notes.filter((n) => /gitleaks also ran/.test(n)).length === 1, JSON.stringify(g.notes));
+    }
+    fs.rmSync(r, { recursive: true, force: true });
+  }
+
   // A quick scan runs a deliberate subset; saying so is the whole point.
   const q = emptyRepo('reg-quick');
   const quick = runGate(q, { quick: true }).checks;

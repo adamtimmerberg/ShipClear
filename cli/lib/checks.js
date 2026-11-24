@@ -507,7 +507,7 @@ const RUNNERS = {
   // secret-in-code finding. Its skip reason says it is optional.
   'deep-secret-scan': (c) => {
     const out = [];
-    runGitleaks(c.root, c.findings, out, c.notes, c.ignored);
+    runGitleaks(c, out);
     return out;
   },
 
@@ -572,10 +572,25 @@ function hasBinary(name) {
   }
 }
 
+const GITLEAKS_UNUSABLE =
+  'gitleaks is installed but could not be run here, so its deeper pass never happened — '
+  + "ShipClear's own secret scan ran either way";
+
 // When gitleaks is installed, run it as a second opinion on top of the
 // built-in patterns — its rule set is deeper than ours. Everything it finds
-// that we didn't becomes an additional secret-in-code finding.
-function runGitleaks(root, findings, notes, ignored) {
+// that we didn't becomes an additional secret-in-code finding, pushed into
+// `out` so the check reports its own count like every other runner.
+//
+// Takes the context rather than its five pieces. It used to take
+// (root, findings, notes, ignored) while the call site passed five
+// arguments, so `notes` was the findings array and `ignored` was the notes
+// array: the "gitleaks also ran" note was pushed into the findings, where
+// runGate's Object.defineProperty crashed on a string, and the first real
+// leak called an array as a function and was swallowed by the catch below.
+// Two arrays and a function as positional parameters is what made that
+// invisible, so there are no longer five of them.
+function runGitleaks(c, out) {
+  const { root, ignored } = c;
   const reportPath = path.join(os.tmpdir(), `shipclear-gitleaks-${process.pid}.json`);
   const attempts = [
     ['dir', root, '--no-banner', '--exit-code', '0', '--report-format', 'json', '--report-path', reportPath],
@@ -594,15 +609,15 @@ function runGitleaks(root, findings, notes, ignored) {
         if (fs.existsSync(reportPath)) { ran = true; break; }
       }
     }
-    if (!ran) return;
+    if (!ran) { c.skip(GITLEAKS_UNUSABLE); return; }
     const leaks = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-    const already = new Set(findings.map((f) => `${f.file}:${f.line || ''}`));
+    const already = new Set(c.findings.map((f) => `${f.file}:${f.line || ''}`));
     let added = 0;
     for (const leak of leaks) {
       const rel = path.relative(root, path.isAbsolute(leak.File) ? leak.File : path.join(root, leak.File))
         .split(path.sep).join('/');
       if (ignored(rel) || already.has(`${rel}:${leak.StartLine}`)) continue;
-      findings.push({
+      out.push({
         id: 'secret-in-code',
         severity: 'critical',
         file: rel,
@@ -611,9 +626,13 @@ function runGitleaks(root, findings, notes, ignored) {
       });
       added++;
     }
-    notes.push(`gitleaks also ran (${added === 0 ? 'no additional findings' : `${added} additional finding${added === 1 ? '' : 's'}`}).`);
+    c.notes.push(`gitleaks also ran (${added === 0 ? 'no additional findings' : `${added} additional finding${added === 1 ? '' : 's'}`}).`);
   } catch {
-    // gitleaks present but unusable — the built-in scan already ran.
+    // gitleaks present but unusable. The built-in scan already ran, but this
+    // check did not — reporting it as passed is the false all-clear this
+    // gate exists to prevent, so it is skipped instead.
+    out.length = 0;
+    c.skip(GITLEAKS_UNUSABLE);
   } finally {
     fs.rmSync(reportPath, { force: true });
   }

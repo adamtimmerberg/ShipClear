@@ -20,6 +20,23 @@ jobs:
         with:
           node-version: 20
       # No install step: ShipClear has zero runtime dependencies, on purpose.
+
+      # The one tool CI installs, and only on Linux. gitleaks is optional for
+      # users, which made it invisible here: the deep-secret-scan runner only
+      # executes when gitleaks is on PATH, so CI never ran it and never ran
+      # the code that handles its output. v1.5.0 shipped with that runner
+      # crashing the entire gate — `npm test` died on any developer machine
+      # with gitleaks installed, while CI stayed green on all three OSes.
+      # An optional dependency that no CI job has is an untested code path.
+      - name: Install gitleaks (so the deep-secret-scan path is covered)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+        env:
+          GITLEAKS_VERSION: 8.30.1
+
       - name: Test suite
         run: npm test
       - name: Adapters match the canonical core
