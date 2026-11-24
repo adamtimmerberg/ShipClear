@@ -311,7 +311,7 @@ export function nextSteps(verdict, { quick = false, rule = true } = {}) {
 // up alongside bad news is not a limitation anyone reads.
 export const DISCLAIMER = [
   'Disclaimer: ShipClear runs a limited set of automated checks. It is a',
-  'supplement to security review, not a substitute for one, and a clear',
+  'supplement to a security review, not a substitute for one, and a clear',
   'verdict is not a guarantee that your software is secure.',
 ];
 
@@ -365,7 +365,9 @@ function wrap(text, { width = 78, first = '', rest = '' } = {}) {
 function groupByReason(skipped) {
   const groups = new Map();
   for (const c of skipped) {
-    if (!groups.has(c.reason)) groups.set(c.reason, { labels: [], steps: c.steps || [] });
+    if (!groups.has(c.reason)) {
+      groups.set(c.reason, { labels: [], steps: c.steps || [], stepsLabel: c.stepsLabel || 'To check them:' });
+    }
     groups.get(c.reason).labels.push(c.label);
   }
   return groups;
@@ -384,7 +386,7 @@ export function skippedSection(checks) {
   // Checks skipped for the same reason are grouped. A quick scan leaves most
   // of the registry unrun for one reason, and eighteen copies of the same
   // sentence is how a reader learns to skip this section entirely.
-  for (const [reason, { labels, steps }] of groupByReason(skipped)) {
+  for (const [reason, { labels, steps, stepsLabel }] of groupByReason(skipped)) {
     if (labels.length > 2) {
       lines.push(...wrap(`${labels.length} checks — ${reason}`, { first: '   – ', rest: '     ' }));
       lines.push(...wrap(labels.join(' · '), { first: '     ', rest: '     ' }));
@@ -395,7 +397,7 @@ export function skippedSection(checks) {
     // check that did not run. Indented commands are left unwrapped so they
     // stay copy-pasteable.
     if (steps.length) {
-      lines.push('     To check them:');
+      lines.push(`     ${stepsLabel}`);
       for (const step of steps) {
         lines.push(...(step.startsWith('  ') || step.length <= 72
           ? [`       ${step}`]
@@ -586,7 +588,13 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
   lines.push(...nextSteps(verdict, { quick }));
 
   lines.push('');
-  lines.push(quick ? '  This was a quick check only. For the full gate: npx shipclear ship' : '  Full report written to SHIP-REPORT.md');
+  // `cat` does not exist in cmd.exe. PowerShell aliases both `cat` and
+  // `type` to Get-Content, so `type` is the one that works in either
+  // Windows shell — show whichever the reader can actually run.
+  const show = process.platform === 'win32' ? 'type' : 'cat';
+  lines.push(quick
+    ? '  This was a quick check only. For the full gate: npx shipclear ship'
+    : `  View the full report by running \`${show} SHIP-REPORT.md\` in the project directory.`);
   lines.push('');
   for (const l of DISCLAIMER) lines.push(`  ${l}`);
   lines.push('');
@@ -624,13 +632,13 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     if (skipped.length) {
       out.push('### Not checked here');
       out.push('');
-      for (const [reason, { labels, steps }] of groupByReason(skipped)) {
+      for (const [reason, { labels, steps, stepsLabel }] of groupByReason(skipped)) {
         out.push(labels.length > 2
           ? `- **${labels.length} checks** — ${reason}\n  - ${labels.join('\n  - ')}`
           : labels.map((l) => `- **${l}** — ${reason}`).join('\n'));
         if (steps.length) {
           out.push('');
-          out.push('  To check them:');
+          out.push(`  ${stepsLabel}`);
           out.push('');
           for (const step of steps) out.push(`  - ${step.trim()}`);
           out.push('');
