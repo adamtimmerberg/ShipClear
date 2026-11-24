@@ -149,7 +149,17 @@ export const REGISTRY = [
     id: 'deep-secret-scan',
     label: 'Deeper secret scan (gitleaks)',
     emits: ['secret-in-code'],
-    skip: (ctx) => (ctx.has('gitleaks') ? null : 'gitleaks is not installed. It is optional — ShipClear\'s own secret scan ran either way; gitleaks would add a second, deeper pass on top of it'),
+    skip: (ctx) => (ctx.has('gitleaks') ? null : {
+      reason: "gitleaks is not installed. It is optional — ShipClear's own secret scan ran either way; gitleaks would add a second, deeper pass on top of it.",
+      stepsLabel: 'To add it:',
+      steps: [
+        '  • macOS or Linux with Homebrew: `brew install gitleaks`',
+        '  • If you have Go: `go install github.com/zricethezav/gitleaks/v8@latest`',
+        '  • Windows, or neither of those: download it from',
+        '    https://github.com/gitleaks/gitleaks/releases and put it somewhere on your PATH',
+        THEN_RERUN,
+      ],
+    }),
   },
   {
     id: 'dependency-vulns',

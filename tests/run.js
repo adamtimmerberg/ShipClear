@@ -1756,6 +1756,21 @@ console.log('\ncheck registry');
     fs.rmSync(alt, { recursive: true, force: true });
   }
 
+  // An optional scanner that is not installed should say how to get it, the
+  // same way the dependency check does.
+  {
+    const g = runGate(emptyRepo('reg-gitleaks')).checks.find((c) => c.id === 'deep-secret-scan');
+    if (g.status === 'skipped') {
+      check('a missing gitleaks comes with the steps to install it',
+        g.steps.some((x) => /brew install gitleaks/.test(x))
+        && g.steps.some((x) => /gitleaks\/releases/.test(x)), (g.steps || []).join(' | '));
+      check('...and says ShipClear picks it up automatically afterwards',
+        g.steps.some((x) => /npx shipclear ship/.test(x)));
+    } else {
+      check('gitleaks is installed here, so its steps are not printed', (g.steps || []).length === 0);
+    }
+  }
+
   // A quick scan runs a deliberate subset; saying so is the whole point.
   const q = emptyRepo('reg-quick');
   const quick = runGate(q, { quick: true }).checks;
@@ -1823,7 +1838,7 @@ console.log('\nship report output');
     check(`${verdict}: the next steps heading is boxed`,
       /\+-{5,}\+\n\s+\|\s+WHAT TO DO NEXT\s+\|\n\s+\+-{5,}\+/.test(out));
     check(`${verdict}: the disclaimer calls ShipClear a supplement, not a substitute`,
-      /supplement to\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
+      /supplement to a\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
   }
 
   // Next steps, and the guardrail that has to survive a copy-paste.
@@ -1857,6 +1872,13 @@ console.log('\nship report output');
   check('...with the guardrail inside the quoted prompt, where a copy will take it', (() => {
     const quoted = bad.slice(bad.indexOf('"Read SHIP-REPORT.md'), bad.indexOf('run it myself."'));
     return /Don't rewrite git history/.test(quoted) && /--fix-history or --probe/.test(quoted);
+  })());
+  // `cat` is not a command in cmd.exe; PowerShell aliases both, so `type` is
+  // the one that works in either Windows shell.
+  check('the report says how to read it, with a command this platform has', (() => {
+    const out = render('CLEARED');
+    const want = process.platform === 'win32' ? 'type SHIP-REPORT.md' : 'cat SHIP-REPORT.md';
+    return out.includes(`View the full report by running \`${want}\``);
   })());
   check('a quick scan tells you to run the full gate', /shipclear ship/.test(render('CLEARED', { quick: true })));
   check('a quick scan never claims work is finished', !/with work still to do/.test(render('CLEARED', { quick: true })));

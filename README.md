@@ -80,8 +80,10 @@ That runs the full gate and gives you a verdict:
 
    3. Run `npx shipclear ship` again, and keep going until the verdict changes.
 
+  View the full report by running `cat SHIP-REPORT.md` in the project directory.
+
   Disclaimer: ShipClear runs a limited set of automated checks. It is a
-  supplement to security review, not a substitute for one, and a clear
+  supplement to a security review, not a substitute for one, and a clear
   verdict is not a guarantee that your software is secure.
 ```
 
@@ -187,7 +189,7 @@ The single exception is opt-in and explicit: `ship --probe <url>` makes read-onl
 
 ## What ShipClear can't do
 
-Honesty is a feature in a security tool. ShipClear is a **supplement to security review, not a substitute for one** — a clear verdict is not a guarantee that your software is secure, and the tool says so on every run. Specifically, it does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
+Honesty is a feature in a security tool. ShipClear is a **supplement to a security review, not a substitute for one** — a clear verdict is not a guarantee that your software is secure, and the tool says so on every run. Specifically, it does **not**: audit your business logic, protect against DDoS, review your cloud console settings, or replace a professional security audit for high-stakes products. It doesn't pen-test your deployment either — `--probe` makes a handful of read-only requests to pages that shouldn't be public, which is a long way from a penetration test. It also can't catch a secret format nobody has taught it — if you find one it misses, [that's a security bug and we treat it like one](SECURITY.md).
 
 ## Updates
 

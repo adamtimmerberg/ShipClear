@@ -80,7 +80,9 @@ export function runGate(root, { quick = false, onCheck = null } = {}) {
 }
 
 /** A skip is a plain reason, or a reason plus the steps that would turn the check on. */
-const asSkip = (s) => (typeof s === 'string' ? { reason: s, steps: [] } : { reason: s.reason, steps: s.steps || [] });
+const asSkip = (s) => (typeof s === 'string'
+  ? { reason: s, steps: [], stepsLabel: null }
+  : { reason: s.reason, steps: s.steps || [], stepsLabel: s.stepsLabel || null });
 
 /**
  * Everything the checks share: the two file lists, a memoized reader, and the
