@@ -33,9 +33,18 @@ npx shipclear ship
 That runs the full gate and gives you a verdict:
 
 ```
-  ShipClear v1.3.0 — ship report
+  +--------------------------------------------------+
+  |  ████ █  █ ████ ████   ████ █    ████  ██  ███   |
+  |  █    █  █  ██  █  █   █    █    █    █  █ █  █  |
+  |  ████ ████  ██  ████   █    █    ███  ████ ███   |
+  |     █ █  █  ██  █      █    █    █    █  █ █ █   |
+  |  ████ █  █ ████ █      ████ ████ ████ █  █ █  █  |
+  |                                                  |
+  |  v1.3.0 — ship report                            |
+  +--------------------------------------------------+
   MIT · runs on your machine · nothing is uploaded
 
+  Running 25 checks:
   [✓] Secrets written in your code
   [✗] Logins hardcoded in your code — 1 to look at
   [✓] Secrets anywhere in your git history
@@ -62,9 +71,11 @@ That runs the full gate and gives you a verdict:
      To check them:
        Create the file npm reads, which also installs your packages:
        `npm install`
-       Then run `shipclear ship` again — the check runs on its own from then on.
+       Then run `npx shipclear ship` again — the check runs on its own.
 
-  What to do next
+  ────────────────────────────────────────────────────────────
+  WHAT TO DO NEXT
+  ────────────────────────────────────────────────────────────
    1. Rotate the keys listed above — now, before anything else. That is the step
       that actually protects you; the rest is cleanup.
    2. Fix the findings. If you built this with an AI, paste it this:
@@ -72,11 +83,11 @@ That runs the full gate and gives you a verdict:
          ones first. Don't rewrite git history, and don't run any shipclear command
          with --fix-history or --probe — tell me if a finding needs one and I'll
          run it myself."
-   3. Run `shipclear ship` again, and keep going until the verdict changes.
+   3. Run `npx shipclear ship` again, and keep going until the verdict changes.
 
-  ShipClear runs a limited set of automated checks. It is a supplement to
-  security review, not a substitute for one, and a clear verdict is not a
-  guarantee that your software is secure.
+  Disclaimer: ShipClear runs a limited set of automated checks. It is a
+  supplement to security review, not a substitute for one, and a clear
+  verdict is not a guarantee that your software is secure.
 ```
 
 Every finding answers three questions in plain English: **what is this, why does it matter, what do I do.** Safe fixes are applied for you. No security background needed.

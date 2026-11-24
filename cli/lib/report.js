@@ -109,7 +109,7 @@ const EXPLAIN = {
   'gitignore-incomplete': {
     title: '.env files are not protected by .gitignore',
     why: 'Without this, one ordinary `git add .` commits your secrets. This is the single most common way keys leak.',
-    fix: 'Add a line with just `.env` (and `.env.*`) to your .gitignore file — or run `shipclear ship` again without `--no-fix` and ShipClear will add it for you.',
+    fix: 'Add a line with just `.env` (and `.env.*`) to your .gitignore file — or run `npx shipclear ship` again without `--no-fix` and ShipClear will add it for you.',
   },
   'pii-data-file': {
     title: 'A data file with real-looking personal information is in the repo',
@@ -206,7 +206,7 @@ const EXPLAIN = {
   'env-example-missing': {
     title: 'No .env.example template exists',
     why: 'Not a leak — just a courtesy: a template tells collaborators (and AI agents) which settings exist without revealing any values.',
-    fix: 'Copy .env to .env.example and delete all the values, keeping just the variable names — or run `shipclear ship` again without `--no-fix` and ShipClear will create it for you.',
+    fix: 'Copy .env to .env.example and delete all the values, keeping just the variable names — or run `npx shipclear ship` again without `--no-fix` and ShipClear will create it for you.',
   },
 };
 
@@ -261,10 +261,16 @@ const AGENT_PROMPT = [
 ];
 
 /** Verdict-conditional closing guidance. Plain steps, in the order to do them. */
-export function nextSteps(verdict, { quick = false } = {}) {
-  const lines = ['  What to do next'];
+export function nextSteps(verdict, { quick = false, rule = true } = {}) {
+  // Set apart deliberately. In a long report this is the one block the
+  // reader has to act on, and as plain prose among findings and skip
+  // reasons it was the easiest thing on the screen to scroll past.
+  const lines = rule
+    ? ['  ' + '─'.repeat(60), '  WHAT TO DO NEXT', '  ' + '─'.repeat(60)]
+    : ['  What to do next'];
   if (quick) {
-    lines.push('   1. This was the quick check. Run the full gate before you ship: shipclear ship');
+    lines.push('   1. This was the quick check. Run the full gate before you ship:');
+    lines.push('      `npx shipclear ship`');
     lines.push('   2. Fix anything it reports, then run it again until the verdict changes.');
     return lines;
   }
@@ -276,8 +282,8 @@ export function nextSteps(verdict, { quick = false } = {}) {
     lines.push(`   2. Put an honest badge in your README: ${BADGE_NEXT_STEP}`);
     lines.push('      (It re-runs this gate on GitHub for every push, so it turns red if a');
     lines.push('       commit lands that ShipClear would not clear.)');
-    lines.push('   3. Run this again before every launch. A verdict describes the code as it is');
-    lines.push('      right now, not as it will be after your next change.');
+    lines.push('   3. Run `npx shipclear ship` again before every launch. A verdict describes');
+    lines.push('      the code as it is right now, not as it will be after your next change.');
     return lines;
   }
   let n = 1;
@@ -287,7 +293,7 @@ export function nextSteps(verdict, { quick = false } = {}) {
   }
   lines.push(`   ${n++}. Fix the findings. If you built this with an AI, paste it this:`);
   for (const l of AGENT_PROMPT) lines.push(`        ${l}`);
-  lines.push(`   ${n++}. Run \`shipclear ship\` again, and keep going until the verdict changes.`);
+  lines.push(`   ${n++}. Run \`npx shipclear ship\` again, and keep going until the verdict changes.`);
   lines.push('   Stuck on any of it? Plain-English help:');
   lines.push('   https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
   return lines;
@@ -296,9 +302,9 @@ export function nextSteps(verdict, { quick = false } = {}) {
 // Printed on every verdict, good news included. A limitation that only shows
 // up alongside bad news is not a limitation anyone reads.
 export const DISCLAIMER = [
-  'ShipClear runs a limited set of automated checks. It is a supplement to',
-  'security review, not a substitute for one, and a clear verdict is not a',
-  'guarantee that your software is secure.',
+  'Disclaimer: ShipClear runs a limited set of automated checks. It is a',
+  'supplement to security review, not a substitute for one, and a clear',
+  'verdict is not a guarantee that your software is secure.',
 ];
 
 export const DISCLAIMER_PARAGRAPH =
@@ -423,7 +429,7 @@ const QUICK_VERDICT_TEXT = {
 // GO, handed out by the tool whose whole job is preventing them. The real
 // badge is a live GitHub Actions status installed by `shipclear badge`,
 // which re-runs this gate on GitHub for every push (see lib/badge.js).
-export const BADGE_NEXT_STEP = 'shipclear badge';
+export const BADGE_NEXT_STEP = 'npx shipclear badge';
 
 function sorted(findings) {
   return [...findings].sort(
@@ -446,14 +452,73 @@ const color = (code, s) =>
 // steps, never a `<file>` placeholder.
 const fixTextFor = (ex, f) => (typeof ex.fix === 'function' ? ex.fix(f) : ex.fix);
 
+// Hand-cut because the zero-dependency rule rules out figlet and friends
+// (decisions/zero-dependencies.md). Five rows, four columns per letter.
+const GLYPHS = {
+  S: ['████', '█   ', '████', '   █', '████'],
+  H: ['█  █', '█  █', '████', '█  █', '█  █'],
+  I: ['████', ' ██ ', ' ██ ', ' ██ ', '████'],
+  P: ['████', '█  █', '████', '█   ', '█   '],
+  C: ['████', '█   ', '█   ', '█   ', '████'],
+  L: ['█   ', '█   ', '█   ', '█   ', '████'],
+  E: ['████', '█   ', '███ ', '█   ', '████'],
+  A: [' ██ ', '█  █', '████', '█  █', '█  █'],
+  R: ['███ ', '█  █', '███ ', '█ █ ', '█  █'],
+};
+
 /**
- * The line the run opens with. The version is read from package.json by the
- * CLI and passed in, so the banner can never claim a version that isn't the
- * one running.
+ * The wordmark, as five rows of block characters. Block capitals lose the
+ * camel case, so the two halves of the name get a wider gap than the letters
+ * do — otherwise it reads SHIPCLEAR rather than ShipClear.
  */
-export function banner(version, { quick = false } = {}) {
-  return `\n  ShipClear v${version} — ${quick ? 'quick scan' : 'ship report'}`
+function wordmark(...words) {
+  return [0, 1, 2, 3, 4].map((row) =>
+    words.map((w) => [...w].map((ch) => GLYPHS[ch][row]).join(' ')).join('   '));
+}
+
+/** Content lines wrapped in a dashed box, sized to the widest line. */
+function dashedBox(lines, indent = '  ') {
+  const width = Math.max(...lines.map((l) => l.length));
+  const rule = `${indent}+${'-'.repeat(width + 4)}+`;
+  return [
+    rule,
+    ...lines.map((l) => `${indent}|  ${l.padEnd(width)}  |`),
+    rule,
+  ];
+}
+
+// Width of the boxed banner, so a narrow terminal gets the plain line
+// instead of a wordmark folded in half.
+const BANNER_WIDTH = 2 + 2 + 4 + (9 * 4 + 7 + 2) + 4;
+
+/**
+ * The banner the run opens with.
+ *
+ * The version is read from package.json by the CLI and passed in, so it can
+ * never claim a version other than the one running. A pipe, a CI job, or a
+ * terminal too narrow for the wordmark gets the one-line form — nobody needs
+ * block capitals in a build log.
+ */
+export function banner(version, { quick = false, columns = null, tty = null } = {}) {
+  const label = quick ? 'quick scan' : 'ship report';
+  const plain = `\n  ShipClear v${version} — ${label}`
     + '\n  MIT · runs on your machine · nothing is uploaded\n\n';
+
+  const isTty = tty === null ? Boolean(process.stdout.isTTY) : tty;
+  const width = columns === null ? (process.stdout.columns || 80) : columns;
+  if (!isTty || width < BANNER_WIDTH) return plain;
+
+  const box = dashedBox([
+    ...wordmark('SHIP', 'CLEAR'),
+    '',
+    `v${version} — ${label}`,
+  ]);
+  return `\n${box.join('\n')}\n  MIT · runs on your machine · nothing is uploaded\n\n`;
+}
+
+/** Printed above the first check line, so the stream reads as a list of checks. */
+export function checksHeading(total) {
+  return `  Running ${total} checks:`;
 }
 
 /**
@@ -510,7 +575,7 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
   lines.push(...nextSteps(verdict, { quick }));
 
   lines.push('');
-  lines.push(quick ? '  This was a quick check only. For the full gate: shipclear ship' : '  Full report written to SHIP-REPORT.md');
+  lines.push(quick ? '  This was a quick check only. For the full gate: npx shipclear ship' : '  Full report written to SHIP-REPORT.md');
   lines.push('');
   for (const l of DISCLAIMER) lines.push(`  ${l}`);
   lines.push('');
@@ -620,7 +685,9 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
   out.push('');
   // The terminal version is indented for a terminal; the report wants plain
   // markdown, so the same lines are stripped of their leading spaces.
-  for (const line of nextSteps(verdict).slice(1)) out.push(line.replace(/^\s{3}/, '').trimEnd());
+  // rule:false — the markdown already has its own heading, and the terminal's
+  // separator rules would render as stray box-drawing characters in it.
+  for (const line of nextSteps(verdict, { rule: false }).slice(1)) out.push(line.replace(/^\s{3}/, '').trimEnd());
   out.push('');
   out.push('---');
   out.push('');

@@ -42,7 +42,7 @@ const OSV_INSTALL = [
   '  • Windows, or neither of those: download it from',
   '    https://github.com/google/osv-scanner/releases and put it somewhere on your PATH',
 ];
-const THEN_RERUN = 'Then run `shipclear ship` again — the check will be in the list.';
+const THEN_RERUN = 'Then run `npx shipclear ship` again — the check will be in the list.';
 
 // What the user can actually type, per situation. Printed only when the
 // check did not run, because a list of install steps under a check that
@@ -74,7 +74,7 @@ function dependencySkip(ctx) {
       reason: 'no package-lock.json, so your dependencies were not checked for known vulnerabilities.',
       steps: [
         'Create the file npm reads, which also installs your packages: `npm install`',
-        'Then run `shipclear ship` again — the check runs on its own from then on.',
+        'Then run `npx shipclear ship` again — the check runs on its own from then on.',
         '(If your package.json has no "dependencies" section, there is genuinely nothing to check.)',
       ],
     };
@@ -160,6 +160,6 @@ export const REGISTRY = [
 ];
 
 export const QUICK_SKIP_REASON =
-  'this is the quick scan; the check needs the full gate — run `shipclear ship`';
+  'this is the quick scan; the check needs the full gate — run `npx shipclear ship`';
 
 export const byId = (id) => REGISTRY.find((c) => c.id === id);

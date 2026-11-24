@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { REGISTRY } from '../cli/lib/registry.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
-import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN, banner, checkLine, tallyLine, nextSteps, DISCLAIMER, SEMANTIC_CHECKS } from '../cli/lib/report.js';
+import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN, banner, checkLine, checksHeading, tallyLine, nextSteps, DISCLAIMER, SEMANTIC_CHECKS } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION, defaultBranch, badgeBranchIn } from '../cli/lib/badge.js';
 import { runProbe, normalizeBase } from '../cli/lib/probe.js';
@@ -1787,8 +1787,17 @@ console.log('\nship report output');
   });
 
   // The banner version is read at runtime, never written down.
-  check('the banner prints the version it was given', banner('4.5.6').includes('ShipClear v4.5.6'));
+  check('the banner prints the version it was given', banner('4.5.6').includes('v4.5.6'));
   check('the banner says where this runs', /runs on your machine/.test(banner('1.0.0')));
+  // The wordmark is for a person at a terminal. A pipe, a CI log or a narrow
+  // window gets the one-line form instead of block capitals folded in half.
+  const wide = banner('4.5.6', { tty: true, columns: 100 });
+  check('a wide terminal gets the wordmark in a box', wide.includes('████') && wide.includes('+---'));
+  check('...carrying the running version, not a hardcoded one', wide.includes('v4.5.6'));
+  check('a pipe gets the plain one-line banner', !banner('4.5.6', { tty: false, columns: 100 }).includes('████'));
+  check('a narrow terminal gets the plain one-line banner too',
+    !banner('4.5.6', { tty: true, columns: 40 }).includes('████'));
+  check('the check stream is introduced as checks', /Running 25 checks/.test(checksHeading(25)));
 
   check('a passed check is marked with a tick', checkLine(CHECKS[0]).includes('[✓]'));
   check('a check that found something is marked, and says how many',
@@ -1810,6 +1819,9 @@ console.log('\nship report output');
     check(`${verdict}: what was not checked is repeated next to the verdict`,
       out.includes('Not checked here:') && out.includes('dependencies were not checked'));
     check(`${verdict}: the disclaimer prints`, out.includes(DISCLAIMER[0]));
+    check(`${verdict}: the disclaimer is labelled as one`, /Disclaimer: /.test(out));
+    check(`${verdict}: the next steps are set apart by a rule and a heading`,
+      /─{10,}\n\s+WHAT TO DO NEXT\n\s+─{10,}/.test(out));
     check(`${verdict}: the disclaimer calls ShipClear a supplement, not a substitute`,
       /supplement to\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
   }
@@ -1817,6 +1829,13 @@ console.log('\nship report output');
   // Next steps, and the guardrail that has to survive a copy-paste.
   const bad = render('DO_NOT_SHIP');
   check('a blocking verdict puts key rotation first', /1\. Rotate the keys/.test(bad));
+  // A reader who has installed nothing can only run it through npx, so every
+  // instruction to re-run has to say so.
+  check('every instruction to re-run the gate uses npx', (() => {
+    const all = [render('CLEARED'), render('SHIP_WITH_FIXES'), bad, render('CLEARED', { quick: true })].join('\n');
+    const bare = all.split('\n').filter((l) => /(?<!npx )shipclear (ship|badge)/.test(l));
+    return bare.length === 0;
+  })(), 'a line tells the reader to run shipclear without npx');
   check('...and hands over a prompt for the user\'s AI', bad.includes('Read SHIP-REPORT.md in this project'));
   check('...with the guardrail inside the quoted prompt, where a copy will take it', (() => {
     const quoted = bad.slice(bad.indexOf('"Read SHIP-REPORT.md'), bad.indexOf('run it myself."'));
@@ -1865,6 +1884,7 @@ console.log('\nship report output');
   check('the report lists every check with its result', md.includes('**2 of 3 checks ran**') && md.includes('| – | Check C | not run |'));
   check('the report repeats why a check did not run', md.includes('### Not checked here'));
   check('the report carries the next steps', md.includes('## What to do next'));
+  check('...without the terminal rules leaking into the markdown', !md.includes('────'));
   check('the report carries the full disclaimer', /not a substitute for review by a qualified security professional/.test(md));
   check('the semantic checklist comes from the shared list',
     SEMANTIC_CHECKS.every((item) => md.includes(`- [ ] ${item}`)));
@@ -1882,8 +1902,8 @@ console.log('\ndocumented counts');
     (readme.match(/\d+ deterministic checks/) || ['not found'])[0]);
   const version = JSON.parse(fs.readFileSync(path.join(here, '../package.json'), 'utf8')).version;
   check(`the README's sample output shows the current version (${version})`,
-    readme.includes(`ShipClear v${version} — ship report`),
-    (readme.match(/ShipClear v[\d.]+ — ship report/) || ['not found'])[0]);
+    readme.includes(`v${version} — ship report`),
+    (readme.match(/v[\d.]+ — ship report/) || ['not found'])[0]);
   check(`the README's semantic count matches the checklist (${SEMANTIC_CHECKS.length})`,
     readme.includes(`${SEMANTIC_CHECKS.length}-point semantic checklist`),
     (readme.match(/[\w-]+-point semantic checklist/) || ['not found'])[0]);
