@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { runGate } from '../cli/lib/checks.js';
 import { REGISTRY } from '../cli/lib/registry.js';
 import { applyFixes, resetHistory } from '../cli/lib/fix.js';
-import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN } from '../cli/lib/report.js';
+import { verdictOf, renderMarkdown, renderTerminal, VERDICT_TEXT, EXPLAIN, banner, checkLine, tallyLine, nextSteps, DISCLAIMER, SEMANTIC_CHECKS } from '../cli/lib/report.js';
 import { findSecrets, looksPlaceholder, personalPaths } from '../cli/lib/patterns.js';
 import { githubSlug, badgeMarkdown, withBadge, workflowYaml, installBadge, WORKFLOW_REL, MIN_CLI_VERSION } from '../cli/lib/badge.js';
 import { runProbe, normalizeBase } from '../cli/lib/probe.js';
@@ -1693,6 +1693,85 @@ console.log('\ncheck registry');
   runGate(live, { onCheck: (r) => seen.push(r.id) });
   check('onCheck fires once per check, in registry order', seen.join(',') === REGISTRY.map((c) => c.id).join(','));
   fs.rmSync(live, { recursive: true, force: true });
+}
+
+// --- the ship report's own output ---
+console.log('\nship report output');
+{
+  const CHECKS = [
+    { id: 'a', label: 'Check A', status: 'passed', count: 0 },
+    { id: 'b', label: 'Check B', status: 'findings', count: 2 },
+    { id: 'c', label: 'Check C', status: 'skipped', count: 0, reason: 'no package-lock.json, so your dependencies were not checked' },
+  ];
+  const render = (verdict, extra = {}) => renderTerminal({
+    findings: [], notes: [], verdict, version: '9.9.9', checks: CHECKS, ...extra,
+  });
+
+  // The banner version is read at runtime, never written down.
+  check('the banner prints the version it was given', banner('4.5.6').includes('ShipClear v4.5.6'));
+  check('the banner says where this runs', /runs on your machine/.test(banner('1.0.0')));
+
+  check('a passed check is marked with a tick', checkLine(CHECKS[0]).includes('[✓]'));
+  check('a check that found something is marked, and says how many',
+    checkLine(CHECKS[1]).includes('[✗]') && /2 to look at/.test(checkLine(CHECKS[1])));
+  check('a skipped check is marked apart from both', checkLine(CHECKS[2]).includes('[–]'));
+  check('the tally counts what ran, not what exists', tallyLine(CHECKS) === '  2 of 3 checks ran · 1 skipped');
+
+  // The honesty requirements, verdict by verdict.
+  const cleared = render('CLEARED');
+  check('a clear verdict says there is work still to do', cleared.includes('CLEARED TO SHIP — with work still to do'));
+  check('...and names what the automated checks cannot see', /whether every route checks who you are/.test(cleared));
+  check('...and counts the outstanding semantic checks from the list itself',
+    cleared.includes(`${SEMANTIC_CHECKS.length} checks are still outstanding`));
+  check('...and still offers the badge', cleared.includes('shipclear badge'));
+
+  for (const verdict of ['CLEARED', 'SHIP_WITH_FIXES', 'DO_NOT_SHIP']) {
+    const out = render(verdict);
+    check(`${verdict}: the tally is printed with the verdict`, out.includes('2 of 3 checks ran'));
+    check(`${verdict}: what was not checked is repeated next to the verdict`,
+      out.includes('Not checked here:') && out.includes('dependencies were not checked'));
+    check(`${verdict}: the disclaimer prints`, out.includes(DISCLAIMER[0]));
+    check(`${verdict}: the disclaimer calls ShipClear a supplement, not a substitute`,
+      /supplement to\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
+  }
+
+  // Next steps, and the guardrail that has to survive a copy-paste.
+  const bad = render('DO_NOT_SHIP');
+  check('a blocking verdict puts key rotation first', /1\. Rotate the keys/.test(bad));
+  check('...and hands over a prompt for the user\'s AI', bad.includes('Read SHIP-REPORT.md in this project'));
+  check('...with the guardrail inside the quoted prompt, where a copy will take it', (() => {
+    const quoted = bad.slice(bad.indexOf('"Read SHIP-REPORT.md'), bad.indexOf('run it myself."'));
+    return /Don't rewrite git history/.test(quoted) && /--fix-history or --probe/.test(quoted);
+  })());
+  check('a quick scan tells you to run the full gate', /shipclear ship/.test(render('CLEARED', { quick: true })));
+  check('a quick scan never claims work is finished', !/with work still to do/.test(render('CLEARED', { quick: true })));
+
+  // Colour: markers and the verdict line only. Everything else stays plain so
+  // a pipe, a CI job and an AI reading stdout all see the same bytes.
+  const wasTTY = process.stdout.isTTY;
+  process.stdout.isTTY = true;
+  try {
+    const tinted = render('DO_NOT_SHIP');
+    const ansiLines = tinted.split('\n').filter((l) => /\x1b\[/.test(l));
+    check('only the verdict line is tinted', ansiLines.length === 1 && ansiLines[0].includes('DO NOT SHIP'),
+      ansiLines.join(' | '));
+    check('check markers are coloured', /\x1b\[32m/.test(checkLine(CHECKS[0])) && /\x1b\[33m/.test(checkLine(CHECKS[2])));
+    check('a check that found something is red', /\x1b\[31m/.test(checkLine(CHECKS[1])));
+  } finally {
+    process.stdout.isTTY = wasTTY;
+  }
+  check('with no terminal attached nothing is coloured', !/\x1b\[/.test(render('DO_NOT_SHIP')));
+
+  // The markdown report has to agree with the terminal, because it is the
+  // artifact people forward to someone else.
+  const md = renderMarkdown({ findings: [], notes: [], verdict: 'CLEARED', version: '9.9.9', checks: CHECKS });
+  check('the report carries the same verdict wording', md.includes('CLEARED TO SHIP — with work still to do'));
+  check('the report lists every check with its result', md.includes('**2 of 3 checks ran**') && md.includes('| – | Check C | not run |'));
+  check('the report repeats why a check did not run', md.includes('### Not checked here'));
+  check('the report carries the next steps', md.includes('## What to do next'));
+  check('the report carries the full disclaimer', /not a substitute for review by a qualified security professional/.test(md));
+  check('the semantic checklist comes from the shared list',
+    SEMANTIC_CHECKS.every((item) => md.includes(`- [ ] ${item}`)));
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);

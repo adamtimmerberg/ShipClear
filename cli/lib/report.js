@@ -215,6 +215,164 @@ const SEVERITY_LABEL = {
   critical: '🛑 CRITICAL', high: '🔴 HIGH', medium: '🟠 MEDIUM', low: '🟡 LOW', info: 'ℹ️  INFO',
 };
 
+// What a CLEARED verdict does and does not cover. Printed under the headline
+// because "cleared to ship" on its own invites the reading that the software
+// has been judged secure, and this command judged one half of that: the half
+// a pattern can see. The other half is the semantic checklist, which needs
+// something able to read the code.
+export const CLEARED_SCOPE = [
+  'Nothing blocking in the automated checks that ran. Those cover what a pattern',
+  'can see: secrets, git history, committed files, deploy config. They cannot see',
+  'whether every route checks who you are, whether your database rules let anyone',
+  'read anything, or whether a price is trusted from the browser.',
+];
+
+// The checks that need code understanding rather than pattern matching. One
+// list, used by the markdown report and counted by the next-steps text, so
+// the number is never written down twice.
+export const SEMANTIC_CHECKS = [
+  '**Hidden accounts:** no route, seed, or conditional grants access via a fixed credential or magic string — including ones the AI created during development.',
+  '**Auth and ownership:** every endpoint either requires authentication or is intentionally public; every resource access verifies the resource belongs to the requester (an ID alone is never enough).',
+  '**Database exposure:** no world-readable/world-writable rules (Firebase rules, Supabase RLS, etc.).',
+  '**Client-side leakage:** no server secret reaches anything delivered to the browser.',
+  '**Input handling:** database/shell input parameterized, rendered HTML escaped, file uploads validated with size limits.',
+  '**Server-side trust:** prices, roles, and privileged fields computed or verified server-side; webhook signatures verified before processing.',
+  '**Session and abuse surface:** tokens in httpOnly cookies (not localStorage); rate limiting on login/signup/reset.',
+  '**Debug surface:** no debug endpoints, stack traces shown to users, or `*` CORS on authenticated APIs.',
+  '**AI surface** (if the app calls LLMs/agents): prompt inputs treated as untrusted, model output validated before executing/rendering/storing, agent and MCP tools least-privilege.',
+  "**Credentials actually in use:** every password, key and token in the live config differs from the value in the example/sample config and from the service's documented default; the app refuses to start in production if a placeholder remains.",
+  '**File and object storage:** no bucket or container is publicly readable, and nothing anonymous can **list** its contents. Confirm with a request to the bucket root, not just by reading config.',
+  '**Proxy and ingress:** no public route forwards wholesale into a backing service (database, object store, queue, admin UI); routes are narrowed to the paths actually needed.',
+  '**Outbound fetches:** if the server fetches URLs supplied by users (import-from-URL, link previews, webhooks, avatars), internal and cloud-metadata addresses are refused — and re-checked after every redirect.',
+  '**Header coverage:** security headers apply to the responses that serve HTML, not only to the API.',
+  '**Verdict update:** append any semantic findings here and restate the verdict (a critical one means DO NOT SHIP).',
+];
+
+// The guardrail lives *inside* the quoted prompt, not above it. People copy
+// the quoted text and nothing else, and the prompt may well be pasted into a
+// chat that never saw ShipClear's adapter rules — so the instruction not to
+// rewrite history has to travel with it. An agent let loose on a
+// secret-in-history finding can otherwise force-push a rewritten branch.
+const AGENT_PROMPT = [
+  '"Read SHIP-REPORT.md in this project and fix every finding, the critical',
+  " ones first. Don't rewrite git history, and don't run any shipclear command",
+  ' with --fix-history or --probe — tell me if a finding needs one and I\'ll',
+  ' run it myself."',
+];
+
+/** Verdict-conditional closing guidance. Plain steps, in the order to do them. */
+export function nextSteps(verdict, { quick = false } = {}) {
+  const lines = ['  What to do next'];
+  if (quick) {
+    lines.push('   1. This was the quick check. Run the full gate before you ship: shipclear ship');
+    lines.push('   2. Fix anything it reports, then run it again until the verdict changes.');
+    return lines;
+  }
+  if (verdict === 'CLEARED') {
+    lines.push(`   1. ${SEMANTIC_CHECKS.length} checks are still outstanding — the ones that need something able`);
+    lines.push('      to read your code. They are listed at the end of SHIP-REPORT.md. Ask your');
+    lines.push('      AI assistant to work through them, or a developer friend. No AI at all?');
+    lines.push('      Paste that list and your code into any free AI chat.');
+    lines.push(`   2. Put an honest badge in your README: ${BADGE_NEXT_STEP}`);
+    lines.push('      (It re-runs this gate on GitHub for every push, so it turns red if a');
+    lines.push('       commit lands that ShipClear would not clear.)');
+    lines.push('   3. Run this again before every launch. A verdict describes the code as it is');
+    lines.push('      right now, not as it will be after your next change.');
+    return lines;
+  }
+  let n = 1;
+  if (verdict === 'DO_NOT_SHIP') {
+    lines.push(`   ${n++}. Rotate the keys listed above — now, before anything else. That is the step`);
+    lines.push('      that actually protects you; the rest is cleanup.');
+  }
+  lines.push(`   ${n++}. Fix the findings. If you built this with an AI, paste it this:`);
+  for (const l of AGENT_PROMPT) lines.push(`        ${l}`);
+  lines.push(`   ${n++}. Run \`shipclear ship\` again, and keep going until the verdict changes.`);
+  lines.push('   Stuck on any of it? Plain-English help:');
+  lines.push('   https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
+  return lines;
+}
+
+// Printed on every verdict, good news included. A limitation that only shows
+// up alongside bad news is not a limitation anyone reads.
+export const DISCLAIMER = [
+  'ShipClear runs a limited set of automated checks. It is a supplement to',
+  'security review, not a substitute for one, and a clear verdict is not a',
+  'guarantee that your software is secure.',
+];
+
+export const DISCLAIMER_PARAGRAPH =
+  'This report was produced by an automated tool. ShipClear runs a limited set of automated checks and cannot identify every security issue. A "cleared to ship" verdict means only that the checks listed in this report found nothing blocking — it is not a penetration test, not a code audit, and not a substitute for review by a qualified security professional. ShipClear is intended to supplement the work of a security team, not to replace it. You remain responsible for the security of the software you ship.';
+
+const MARKER = { passed: ['[✓]', '32'], findings: ['[✗]', '31'], skipped: ['[–]', '33'] };
+
+/**
+ * One progress line, printed by the CLI as each check finishes. Green ran and
+ * found nothing, red ran and found something, yellow did not run — a check
+ * that found something is a check doing its job, which is why the red one is
+ * not called a failure anywhere in the text.
+ */
+export function checkLine({ label, status, count }) {
+  const [mark, code] = MARKER[status];
+  const tail = status === 'findings' ? ` — ${count} to look at` : '';
+  return `  ${color(code, mark)} ${label}${tail}`;
+}
+
+/** `23 of 25 checks ran · 2 skipped`, counted from the registry's own results. */
+export function tallyLine(checks) {
+  const skipped = checks.filter((c) => c.status === 'skipped').length;
+  const ran = checks.length - skipped;
+  return `  ${ran} of ${checks.length} checks ran`
+    + (skipped ? ` · ${skipped} skipped` : '');
+}
+
+/** Soft-wrap prose to a terminal width, with a hanging indent for the rest. */
+function wrap(text, { width = 78, first = '', rest = '' } = {}) {
+  const out = [];
+  let line = null;
+  for (const word of text.split(/\s+/)) {
+    if (line === null) { line = first + word; continue; }
+    if (`${line} ${word}`.length > width) { out.push(line); line = rest + word; }
+    else line = `${line} ${word}`;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+/** Skipped checks keyed by the reason they share, in registry order. */
+function groupByReason(skipped) {
+  const groups = new Map();
+  for (const c of skipped) {
+    if (!groups.has(c.reason)) groups.set(c.reason, []);
+    groups.get(c.reason).push(c.label);
+  }
+  return groups;
+}
+
+/**
+ * The skipped checks, restated next to the verdict. Deliberately a repeat of
+ * what scrolled past during the run: on a repo with findings the top of that
+ * list is off-screen by the time the verdict lands, and "these were not
+ * checked" is exactly the thing a reader must weigh the verdict against.
+ */
+export function skippedSection(checks) {
+  const skipped = checks.filter((c) => c.status === 'skipped');
+  if (!skipped.length) return [];
+  const lines = ['  Not checked here:'];
+  // Checks skipped for the same reason are grouped. A quick scan leaves most
+  // of the registry unrun for one reason, and eighteen copies of the same
+  // sentence is how a reader learns to skip this section entirely.
+  for (const [reason, labels] of groupByReason(skipped)) {
+    if (labels.length > 2) {
+      lines.push(...wrap(`${labels.length} checks — ${reason}`, { first: '   – ', rest: '     ' }));
+      lines.push(...wrap(labels.join(' · '), { first: '     ', rest: '     ' }));
+    } else {
+      for (const label of labels) lines.push(...wrap(`${label}: ${reason}`, { first: '   – ', rest: '     ' }));
+    }
+  }
+  return lines;
+}
+
 export function verdictOf(findings) {
   const open = findings.filter((f) => !f.resolved);
   if (open.some((f) => f.severity === 'critical')) return 'DO_NOT_SHIP';
@@ -225,7 +383,7 @@ export function verdictOf(findings) {
 export const VERDICT_TEXT = {
   DO_NOT_SHIP: '🛑 DO NOT SHIP — fix the critical findings first.',
   SHIP_WITH_FIXES: '🟡 SHIP WITH FIXES — nothing catastrophic, but close the items listed above first.',
-  CLEARED: '✅ CLEARED TO SHIP — no blocking findings.',
+  CLEARED: '✅ CLEARED TO SHIP — with work still to do',
 };
 
 // `scan` deliberately skips slower checks (full git history, dependency
@@ -269,16 +427,32 @@ const color = (code, s) =>
 // steps, never a `<file>` placeholder.
 const fixTextFor = (ex, f) => (typeof ex.fix === 'function' ? ex.fix(f) : ex.fix);
 
-export function renderTerminal({ findings, notes, verdict, fixes = [], version, quick = false }) {
+/**
+ * The line the run opens with. The version is read from package.json by the
+ * CLI and passed in, so the banner can never claim a version that isn't the
+ * one running.
+ */
+export function banner(version, { quick = false } = {}) {
+  return `\n  ShipClear v${version} — ${quick ? 'quick scan' : 'ship report'}`
+    + '\n  MIT · runs on your machine · nothing is uploaded\n\n';
+}
+
+/**
+ * Everything after the progress lines: findings, the tally, the verdict, what
+ * was not checked, what to do next, and the disclaimer.
+ *
+ * Pure — it returns a string and prints nothing, so the live progress lines
+ * (which the CLI prints through runGate's onCheck as each check finishes)
+ * stay out of it and the whole report body remains testable in one call.
+ */
+export function renderTerminal({ findings, notes, verdict, fixes = [], version, quick = false, checks = [] }) {
   const lines = [];
-  lines.push('');
-  lines.push(color('1', `  ShipClear v${version} — ${quick ? 'quick scan' : 'ship report'}`));
   lines.push('');
 
   const open = sorted(findings.filter((f) => !f.resolved));
   for (const f of open) {
     const ex = EXPLAIN[f.id];
-    lines.push(`  ${SEVERITY_LABEL[f.severity]}  ${color('1', ex.title)}`);
+    lines.push(`  ${SEVERITY_LABEL[f.severity]}  ${ex.title}`);
     if (location(f)) lines.push(`      where: ${location(f)}${f.detail ? ` — ${f.detail}` : ''}`);
     else if (f.detail) lines.push(`      ${f.detail}`);
     lines.push(`      why it matters: ${ex.why}`);
@@ -293,32 +467,38 @@ export function renderTerminal({ findings, notes, verdict, fixes = [], version, 
   if (open.length === 0) lines.push('  No findings. Nice.');
   if (fixes.length) {
     lines.push('');
-    lines.push(color('1', '  Fixed for you:'));
+    lines.push('  Fixed for you:');
     for (const fix of fixes) lines.push(`   ✔ ${fix}`);
   }
   for (const note of notes) lines.push(`  note: ${note}`);
-  lines.push('');
+
+  // The findings loop already ends on a blank line; don't stack a second one.
+  if (lines[lines.length - 1] !== '') lines.push('');
+  if (checks.length) lines.push(tallyLine(checks));
   const v = quick ? QUICK_VERDICT_TEXT[verdict] : VERDICT_TEXT[verdict];
   lines.push('  ' + color(verdict === 'CLEARED' ? '32;1' : verdict === 'DO_NOT_SHIP' ? '31;1' : '33;1', v));
-  // The badge claims "cleared to ship" — only the full gate has earned
-  // that claim. Never offer it off the back of a quick, partial check.
-  if (verdict === 'CLEARED' && !quick) {
+  // Only the full gate earns the scoped-clear wording; the quick scan's own
+  // verdict text already says it is not the gate.
+  if (verdict === 'CLEARED' && !quick) for (const l of CLEARED_SCOPE) lines.push(`     ${l}`);
+
+  const skipped = skippedSection(checks);
+  if (skipped.length) {
     lines.push('');
-    lines.push('  Show it off — put a badge in your README that stays honest:');
-    lines.push(`  ${BADGE_NEXT_STEP}`);
-    lines.push('  (It re-runs this gate on GitHub for every push, so it turns red if a');
-    lines.push('   commit lands that ShipClear would not clear.)');
-  } else if (open.length) {
-    // A stuck first-timer needs the pointer exactly here, at the verdict.
-    lines.push('  Stuck on any of the above? Plain-English help: https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
+    lines.push(...skipped);
   }
+
+  lines.push('');
+  lines.push(...nextSteps(verdict, { quick }));
+
   lines.push('');
   lines.push(quick ? '  This was a quick check only. For the full gate: shipclear ship' : '  Full report written to SHIP-REPORT.md');
+  lines.push('');
+  for (const l of DISCLAIMER) lines.push(`  ${l}`);
   lines.push('');
   return lines.join('\n');
 }
 
-export function renderMarkdown({ findings, notes, verdict, fixes = [], version, semanticSection = true }) {
+export function renderMarkdown({ findings, notes, verdict, fixes = [], version, semanticSection = true, checks = [] }) {
   const open = sorted(findings.filter((f) => !f.resolved));
   const out = [];
   out.push('# Ship Report');
@@ -327,6 +507,36 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
   out.push('');
   out.push(`## Verdict: ${VERDICT_TEXT[verdict]}`);
   out.push('');
+  if (verdict === 'CLEARED') {
+    out.push(CLEARED_SCOPE.join(' '));
+    out.push('');
+  }
+  if (checks.length) {
+    const skipped = checks.filter((c) => c.status === 'skipped');
+    out.push(`**${checks.length - skipped.length} of ${checks.length} checks ran**`
+      + (skipped.length ? ` · ${skipped.length} skipped` : ''));
+    out.push('');
+    out.push('| | Check | Result |');
+    out.push('|---|---|---|');
+    for (const c of checks) {
+      const mark = c.status === 'passed' ? '✓' : c.status === 'findings' ? '✗' : '–';
+      const result = c.status === 'passed' ? 'nothing found'
+        : c.status === 'findings' ? `${c.count} to look at`
+        : 'not run';
+      out.push(`| ${mark} | ${c.label} | ${result} |`);
+    }
+    out.push('');
+    if (skipped.length) {
+      out.push('### Not checked here');
+      out.push('');
+      for (const [reason, labels] of groupByReason(skipped)) {
+        out.push(labels.length > 2
+          ? `- **${labels.length} checks** — ${reason}\n  - ${labels.join('\n  - ')}`
+          : labels.map((l) => `- **${l}** — ${reason}`).join('\n'));
+      }
+      out.push('');
+    }
+  }
   if (verdict === 'CLEARED') {
     out.push('Cleared! To show this in your README, run:');
     out.push('');
@@ -375,24 +585,20 @@ export function renderMarkdown({ findings, notes, verdict, fixes = [], version, 
     out.push('');
     out.push('The scan above catches everything a pattern can catch. These need code understanding — ask your AI assistant to work through them (the ShipClear adapters do this automatically):');
     out.push('');
-    out.push('- [ ] **Hidden accounts:** no route, seed, or conditional grants access via a fixed credential or magic string — including ones the AI created during development.');
-    out.push('- [ ] **Auth and ownership:** every endpoint either requires authentication or is intentionally public; every resource access verifies the resource belongs to the requester (an ID alone is never enough).');
-    out.push('- [ ] **Database exposure:** no world-readable/world-writable rules (Firebase rules, Supabase RLS, etc.).');
-    out.push('- [ ] **Client-side leakage:** no server secret reaches anything delivered to the browser.');
-    out.push('- [ ] **Input handling:** database/shell input parameterized, rendered HTML escaped, file uploads validated with size limits.');
-    out.push('- [ ] **Server-side trust:** prices, roles, and privileged fields computed or verified server-side; webhook signatures verified before processing.');
-    out.push('- [ ] **Session and abuse surface:** tokens in httpOnly cookies (not localStorage); rate limiting on login/signup/reset.');
-    out.push('- [ ] **Debug surface:** no debug endpoints, stack traces shown to users, or `*` CORS on authenticated APIs.');
-    out.push('- [ ] **AI surface** (if the app calls LLMs/agents): prompt inputs treated as untrusted, model output validated before executing/rendering/storing, agent and MCP tools least-privilege.');
-    out.push('- [ ] **Credentials actually in use:** every password, key and token in the live config differs from the value in the example/sample config and from the service\'s documented default; the app refuses to start in production if a placeholder remains.');
-    out.push('- [ ] **File and object storage:** no bucket or container is publicly readable, and nothing anonymous can **list** its contents. Confirm with a request to the bucket root, not just by reading config.');
-    out.push('- [ ] **Proxy and ingress:** no public route forwards wholesale into a backing service (database, object store, queue, admin UI); routes are narrowed to the paths actually needed.');
-    out.push('- [ ] **Outbound fetches:** if the server fetches URLs supplied by users (import-from-URL, link previews, webhooks, avatars), internal and cloud-metadata addresses are refused — and re-checked after every redirect.');
-    out.push('- [ ] **Header coverage:** security headers apply to the responses that serve HTML, not only to the API.');
-    out.push('- [ ] **Verdict update:** append any semantic findings here and restate the verdict (a critical one means DO NOT SHIP).');
+    for (const item of SEMANTIC_CHECKS) out.push(`- [ ] ${item}`);
     out.push('');
     out.push("Running ShipClear without an AI coding tool? Paste this checklist and your code into any AI chat (ChatGPT, Claude.ai, Gemini — even a free one) and ask it to work through the list — or ask a developer friend. These checks matter, but they need something that can read your code to answer them.");
   }
+  out.push('');
+  out.push('## What to do next');
+  out.push('');
+  // The terminal version is indented for a terminal; the report wants plain
+  // markdown, so the same lines are stripped of their leading spaces.
+  for (const line of nextSteps(verdict).slice(1)) out.push(line.replace(/^\s{3}/, '').trimEnd());
+  out.push('');
+  out.push('---');
+  out.push('');
+  out.push(DISCLAIMER_PARAGRAPH);
   out.push('');
   return out.join('\n');
 }
