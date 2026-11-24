@@ -37,8 +37,8 @@ That runs the full gate and gives you a verdict:
   MIT · runs on your machine · nothing is uploaded
 
   Running 25 checks:
-  [✓] Secrets written in your code
   [✗] Logins hardcoded in your code — 1 to look at
+  [✓] Secrets written in your code
   [✓] Secrets anywhere in your git history
   [–] Known-vulnerable dependencies
   …
