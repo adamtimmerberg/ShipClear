@@ -265,9 +265,11 @@ export function nextSteps(verdict, { quick = false, rule = true } = {}) {
   // Set apart deliberately. In a long report this is the one block the
   // reader has to act on, and as plain prose among findings and skip
   // reasons it was the easiest thing on the screen to scroll past.
-  const lines = rule
-    ? ['  ' + '─'.repeat(60), '  WHAT TO DO NEXT', '  ' + '─'.repeat(60)]
-    : ['  What to do next'];
+  //
+  // The heading is boxed; the steps are not. A box around the whole block
+  // would put a `|` down the side of the prompt in step 2, and that prompt
+  // exists to be selected and copied.
+  const lines = rule ? dashedBox(['WHAT TO DO NEXT']) : ['  What to do next'];
   if (quick) {
     lines.push('   1. This was the quick check. Run the full gate before you ship:');
     lines.push('      `npx shipclear ship`');
@@ -291,9 +293,15 @@ export function nextSteps(verdict, { quick = false, rule = true } = {}) {
     lines.push(`   ${n++}. Rotate the keys listed above — now, before anything else. That is the step`);
     lines.push('      that actually protects you; the rest is cleanup.');
   }
-  lines.push(`   ${n++}. Fix the findings. If you built this with an AI, paste it this:`);
+  lines.push(`   ${n++}. Fix the findings. If you built this with an AI, paste the following into`);
+  lines.push('      the project AI chat to fix the issues:');
+  // Blank lines either side: the prompt is meant to be found and selected at
+  // a glance, not read as part of the sentence above it.
+  lines.push('');
   for (const l of AGENT_PROMPT) lines.push(`        ${l}`);
+  lines.push('');
   lines.push(`   ${n++}. Run \`npx shipclear ship\` again, and keep going until the verdict changes.`);
+  lines.push('');
   lines.push('   Stuck on any of it? Plain-English help:');
   lines.push('   https://github.com/adamtimmerberg/ShipClear/blob/main/docs/troubleshooting.md');
   return lines;

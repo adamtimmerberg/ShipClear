@@ -1820,8 +1820,8 @@ console.log('\nship report output');
       out.includes('Not checked here:') && out.includes('dependencies were not checked'));
     check(`${verdict}: the disclaimer prints`, out.includes(DISCLAIMER[0]));
     check(`${verdict}: the disclaimer is labelled as one`, /Disclaimer: /.test(out));
-    check(`${verdict}: the next steps are set apart by a rule and a heading`,
-      /─{10,}\n\s+WHAT TO DO NEXT\n\s+─{10,}/.test(out));
+    check(`${verdict}: the next steps heading is boxed`,
+      /\+-{5,}\+\n\s+\|\s+WHAT TO DO NEXT\s+\|\n\s+\+-{5,}\+/.test(out));
     check(`${verdict}: the disclaimer calls ShipClear a supplement, not a substitute`,
       /supplement to\s+security review, not a substitute/.test(out.replace(/\n\s*/g, ' ')));
   }
@@ -1837,6 +1837,23 @@ console.log('\nship report output');
     return bare.length === 0;
   })(), 'a line tells the reader to run shipclear without npx');
   check('...and hands over a prompt for the user\'s AI', bad.includes('Read SHIP-REPORT.md in this project'));
+  check('...told plainly where to paste it', /paste the following into\n\s+the project AI chat/.test(bad));
+  // Blank lines either side so the prompt is findable and selectable at a
+  // glance rather than reading as part of the sentence above it.
+  check('...with a blank line either side of the prompt', (() => {
+    const lines = bad.split('\n');
+    const first = lines.findIndex((l) => l.includes('"Read SHIP-REPORT.md'));
+    const last = lines.findIndex((l) => l.includes('run it myself."'));
+    return first > 0 && lines[first - 1].trim() === '' && lines[last + 1].trim() === '';
+  })());
+  // A box around the whole block would put a `|` down the side of that
+  // prompt; it exists to be selected and copied.
+  check('...and no box character on the prompt lines', (() => {
+    const lines = bad.split('\n');
+    const first = lines.findIndex((l) => l.includes('"Read SHIP-REPORT.md'));
+    const last = lines.findIndex((l) => l.includes('run it myself."'));
+    return lines.slice(first, last + 1).every((l) => !l.includes('|'));
+  })());
   check('...with the guardrail inside the quoted prompt, where a copy will take it', (() => {
     const quoted = bad.slice(bad.indexOf('"Read SHIP-REPORT.md'), bad.indexOf('run it myself."'));
     return /Don't rewrite git history/.test(quoted) && /--fix-history or --probe/.test(quoted);
@@ -1877,7 +1894,8 @@ console.log('\nship report output');
       const start = lines.findIndex((l) => l.includes('Not checked here'));
       if (start === -1) return false;
       const rest = lines.slice(start);
-      const end = rest.findIndex((l, i) => i > 0 && /─{10,}/.test(l));
+      // The block ends where the boxed next-steps heading begins.
+      const end = rest.findIndex((l, i) => i > 0 && /\+-{5,}\+/.test(l));
       const block = rest.slice(0, end === -1 ? rest.length : end).filter((l) => l.trim());
       return block.length >= 2 && block.every((l) => l.includes('\x1b[33m'));
     })());
