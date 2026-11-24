@@ -75,6 +75,42 @@ export function currentBranch(root) {
   }
 }
 
+/**
+ * The branch this repo's badge should describe: the one origin calls its
+ * default, not whatever happens to be checked out.
+ *
+ * `currentBranch` was the original choice and it was wrong in the one case
+ * that matters. Running `shipclear badge` from a release or feature branch
+ * silently repointed an existing badge at that branch — and when the branch
+ * was later deleted the badge went grey on a public README, having quietly
+ * stopped describing the code anyone actually gets. It happened to this
+ * repo (wiki/gotchas/badge-substring-match.md).
+ */
+export function defaultBranch(root) {
+  try {
+    const ref = run(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).trim();
+    const name = ref.replace(/^origin\//, '');
+    if (name) return name;
+  } catch { /* origin/HEAD isn't set locally — fall through */ }
+  for (const name of ['main', 'master']) {
+    try {
+      run(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`]);
+      return name;
+    } catch { /* not this one */ }
+  }
+  return currentBranch(root);
+}
+
+/** The branch a badge already in this README reports on, or null. */
+export function badgeBranchIn(readme) {
+  for (const m of readme.matchAll(IMAGE_MD)) {
+    if (!isOurBadge(m[0], m[1], m[2])) continue;
+    const found = m[2].match(/[?&]branch=([^&)\s]+)/);
+    if (found) return decodeURIComponent(found[1]);
+  }
+  return null;
+}
+
 // Served by GitHub itself rather than a third-party image host, so the
 // authority on whether the workflow passed is also the thing drawing the
 // picture. `event=push` pins it to pushed code, so a green pull-request run
@@ -186,10 +222,27 @@ export function installBadge(root) {
       reason: "this project has no GitHub remote, so there's nothing to publish a live badge from. Push it to GitHub first (create an empty repo there, then `git remote add origin <its URL>` and `git push -u origin HEAD`), then run `shipclear badge` again.",
     };
   }
-  const branch = currentBranch(root);
-  const badge = badgeMarkdown({ ...slug, branch });
   const done = [];
   const warnings = [];
+
+  const readmePath = ['README.md', 'readme.md', 'README.markdown']
+    .map((n) => path.join(root, n))
+    .find((p) => fs.existsSync(p));
+  const readme = readmePath ? fs.readFileSync(readmePath, 'utf8') : '';
+
+  // A badge already in the README keeps the branch it names. Re-running this
+  // command from another branch must not change what the badge claims: the
+  // badge is a statement about the branch people actually get, and the
+  // person re-running it is usually just re-running it.
+  const existingBranch = badgeBranchIn(readme);
+  const branch = existingBranch || defaultBranch(root);
+  const here = currentBranch(root);
+  if (existingBranch && existingBranch !== here) {
+    done.push(`the badge already reports \`${existingBranch}\`, so it was left pointing there (you are on \`${here}\`)`);
+  } else if (!existingBranch && branch !== here) {
+    done.push(`the badge reports \`${branch}\`, this repo's default branch — not \`${here}\`, which you are on now. A badge pinned to a branch goes grey when that branch is deleted.`);
+  }
+  const badge = badgeMarkdown({ ...slug, branch });
 
   const wfPath = path.join(root, WORKFLOW_REL);
   if (!fs.existsSync(wfPath)) {
@@ -208,13 +261,10 @@ export function installBadge(root) {
     }
   }
 
-  const readmePath = ['README.md', 'readme.md', 'README.markdown']
-    .map((n) => path.join(root, n))
-    .find((p) => fs.existsSync(p));
   if (!readmePath) {
     warnings.push(`no README.md found in this folder, so there was nothing to add the badge to. Create one and paste this line into it:\n${badge}`);
   } else {
-    const before = fs.readFileSync(readmePath, 'utf8');
+    const before = readme;
     const { text, changed, how } = withBadge(before, badge);
     if (changed) fs.writeFileSync(readmePath, text);
     done.push(changed
