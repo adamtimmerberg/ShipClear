@@ -30,17 +30,27 @@
 // failing at HEAD until the history is actually cleaned.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { run } from './git.js';
 
 export const WORKFLOW_REL = '.github/workflows/shipclear.yml';
 
-// The release that introduced `--strict`. The workflow must pin at least
-// this, because unknown flags are silently ignored: run `ship --no-fix
-// --strict` on 1.0.0 and you get plain `ship --no-fix`, which exits 0 on
-// SHIP WITH FIXES — a green badge for a repo with HIGH findings. Verified
-// against the published 1.0.0, not assumed. A caret range still picks up
-// later 1.x releases, so the badge keeps reflecting current knowledge.
-export const MIN_CLI_VERSION = '1.1.0';
+// The badge pins the version that installed it, read from package.json at
+// runtime rather than written down.
+//
+// A floor is required at all because unknown flags are silently ignored: run
+// `ship --no-fix --strict` on 1.0.0 and you get plain `ship --no-fix`, which
+// exits 0 on SHIP WITH FIXES — a green badge for a repo with HIGH findings
+// (verified against the published 1.0.0, not assumed). A hardcoded floor
+// went stale the moment it was written, so the badge a 1.3.0 user installed
+// could run 1.1.0 in CI: a green badge produced by an older, weaker gate
+// than the one whose verdict they read on their own machine.
+//
+// Deriving it keeps those two in step. The caret still takes later 1.x
+// releases, so a badge installed today keeps gaining checks.
+export const MIN_CLI_VERSION = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf8')
+).version;
 
 /** owner/repo from the origin remote, or null if it isn't a GitHub remote. */
 export function githubSlug(root) {

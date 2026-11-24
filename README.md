@@ -7,7 +7,7 @@
 Your AI writes code fast. ShipClear makes sure it's safe to ship —
 free, open source, runs 100% locally, works with every AI coding tool.
 
-[![ShipClear](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml/badge.svg?branch=main&event=push)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml)
+[![ShipClear](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml/badge.svg?branch=release%2F1.3.0&event=push)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/shipclear.yml)
 [![CI](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml/badge.svg)](https://github.com/adamtimmerberg/ShipClear/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
@@ -33,7 +33,7 @@ npx shipclear ship
 That runs the full gate and gives you a verdict:
 
 ```
-  ShipClear v1.2.1 — ship report
+  ShipClear v1.3.0 — ship report
   MIT · runs on your machine · nothing is uploaded
 
   [✓] Secrets written in your code
